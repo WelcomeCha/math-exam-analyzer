@@ -4,6 +4,7 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import os
 import tempfile
 import time
+import markdown # html 변환용 라이브러리 (pip install markdown)
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
@@ -29,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (서식 통일판)")
+st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (저장 기능 추가)")
 
 # 2. API 키 입력
 with st.sidebar:
@@ -63,9 +64,41 @@ def wait_for_files_active(files):
         bar.progress((i + 1) / len(files))
     st.success("✅ 파일 준비 완료! 정밀 분석을 시작합니다.")
 
+# --- HTML 변환 함수 ---
+def create_html_download(markdown_text):
+    html = markdown.markdown(markdown_text, extensions=['tables'])
+    # 예쁜 스타일(CSS) 추가
+    styled_html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: 'Malgun Gothic', sans-serif; line-height: 1.6; padding: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; vertical-align: top; }}
+            th {{ background-color: #f2f2f2; font-weight: bold; text-align: center; }}
+            tr:nth-child(even) {{ background-color: #f9f9f9; }}
+            h3 {{ border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 30px; }}
+            .keyword {{ font-weight: bold; color: #d32f2f; }}
+        </style>
+    </head>
+    <body>
+        <h1>📊 수학 기출 vs 부교재 정밀 분석 결과</h1>
+        {html}
+    </body>
+    </html>
+    """
+    return styled_html
+
+# 4. 분석 로직
 if exam_file and textbook_file and api_key:
+    # 세션 상태 초기화 (결과 저장용)
+    if 'full_analysis_result' not in st.session_state:
+        st.session_state['full_analysis_result'] = ""
+
     if st.button("서식 통일 분석 시작하기 🚀", use_container_width=True):
         status_text = st.empty()
+        st.session_state['full_analysis_result'] = "" # 초기화
         
         try:
             def upload_to_gemini(uploaded_file, mime_type="application/pdf"):
@@ -79,7 +112,6 @@ if exam_file and textbook_file and api_key:
             textbook_ref = upload_to_gemini(textbook_file)
             wait_for_files_active([exam_ref, textbook_ref])
 
-            # 안전 설정 해제
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -104,16 +136,22 @@ if exam_file and textbook_file and api_key:
                 ("22번 ~ 마지막", "기출문제의 22번부터 서술형 끝번(마지막) 문항까지")
             ]
 
+            full_accumulated_text = "" # 전체 결과 모으기용
+
             for i, (title, range_desc) in enumerate(batches):
                 status_text.info(f"🔄 {title} 정밀 분석 중... ({i+1}/{len(batches)})")
                 
+                # 화면 출력
                 if i > 0:
                     st.markdown("---")
-                    
                 st.markdown(f"### 📋 {title}")
+                
+                # 저장용 텍스트에도 제목 추가
+                batch_header = f"\n\n### 📋 {title}\n\n"
+                full_accumulated_text += batch_header
+                
                 placeholder = st.empty()
                 
-                # --- 🔥 [핵심 수정] 서식 통일 가이드라인 추가 ---
                 prompt = f"""
                 당신은 수학 분석 전문가입니다. 
                 두 PDF를 비교하여 **{range_desc}** 상세 분석하세요.
@@ -121,38 +159,55 @@ if exam_file and textbook_file and api_key:
                 **[출력 서식 가이드라인 - 엄격 준수]**
                 모든 문항에 대해 아래 표기법을 토씨 하나 틀리지 말고 따르세요.
                 
-                1. **부교재 문항 표기:** 반드시 **`p.페이지번호 문항번호`** 형태로만 적으세요.
-                   - (O) p.80 285번
-                   - (X) p.80 / 285번 (슬래시 금지)
-                   - (X) 80쪽 285 (한글 '쪽' 금지)
-                   - (X) p.017 040번 (앞에 0 붙이기 금지)
-                
-                2. **변형 포인트 표기:** 반드시 **글머리 기호(•)**를 사용하고, **키워드는 굵게** 처리하세요.
-                   - (O) • **숫자 변형**: 계수가 변경됨...
-                   - (O) • **개념 확장**: 복소수 개념이 추가됨...
+                1. **부교재 문항 표기:** 반드시 **`p.페이지번호 문항번호`** 형태로만 적으세요. (예: p.80 285번)
+                2. **변형 포인트 표기:** 반드시 **글머리 기호(•)**를 사용하고, 키워드는 굵게 처리하세요. (예: • **숫자 변형**: 설명)
                 
                 **[필수 테이블 양식]**
                 | 문항 | 기출문제 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | (번호) | **[원본]**<br>(텍스트만 기재, 그림 묘사 금지)<br><br>**[요약]**<br>(핵심 요약) | **[원본]**<br>p.00 000번<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | (번호) | **[원본]**<br>(텍스트 기재, 그림 묘사 금지)<br><br>**[요약]**<br>(내용 요약) | **[원본]**<br>p.00 000번<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 
                 **[주의사항]**
                 - '[원본]' 작성 시 그래프나 도형 묘사는 생략하세요.
                 - 해당 문제가 없으면 "해당 없음"만 적으세요.
                 """
                 
-                full_text = ""
+                chunk_text = ""
                 stream = model.generate_content([prompt, exam_ref, textbook_ref], stream=True)
                 
                 try:
                     for chunk in stream:
                         if chunk.text:
-                            full_text += chunk.text
-                            placeholder.markdown(full_text, unsafe_allow_html=True)
+                            chunk_text += chunk.text
+                            placeholder.markdown(chunk_text, unsafe_allow_html=True)
                 except Exception as e:
                     pass
+                
+                # 배치 끝날 때마다 전체 텍스트에 추가
+                full_accumulated_text += chunk_text
 
-            status_text.success("✅ 모든 문항의 상세 분석이 완료되었습니다!")
+            # 모든 루프가 끝나면 세션에 저장
+            st.session_state['full_analysis_result'] = full_accumulated_text
+            status_text.success("✅ 모든 문항의 상세 분석이 완료되었습니다! 아래 버튼을 눌러 저장하세요.")
 
         except Exception as e:
             st.error(f"오류 발생: {e}")
+
+    # --- 다운로드 버튼 (분석 결과가 있을 때만 표시) ---
+    if st.session_state['full_analysis_result']:
+        st.divider()
+        st.subheader("💾 분석 결과 저장")
+        
+        # HTML로 변환
+        html_data = create_html_download(st.session_state['full_analysis_result'])
+        
+        col_d1, col_d2 = st.columns([1, 4])
+        with col_d1:
+            st.download_button(
+                label="📥 HTML 파일로 다운로드",
+                data=html_data,
+                file_name="수학_기출_분석_결과.html",
+                mime="text/html"
+            )
+        with col_d2:
+            st.info("💡 **팁:** 다운로드 받은 HTML 파일을 열고, **[Ctrl + P]**를 눌러 **'PDF로 저장'**을 선택하면 깔끔한 PDF 문서를 만들 수 있습니다.")
