@@ -4,7 +4,7 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import os
 import tempfile
 import time
-import markdown # html 변환용 라이브러리 (pip install markdown)
+import markdown
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
@@ -30,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (저장 기능 추가)")
+st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (수식 지원)")
 
 # 2. API 키 입력
 with st.sidebar:
@@ -64,27 +64,46 @@ def wait_for_files_active(files):
         bar.progress((i + 1) / len(files))
     st.success("✅ 파일 준비 완료! 정밀 분석을 시작합니다.")
 
-# --- HTML 변환 함수 ---
+# --- 🔥 [핵심 수정] 수식(LaTeX) 지원 HTML 변환 함수 ---
 def create_html_download(markdown_text):
-    html = markdown.markdown(markdown_text, extensions=['tables'])
-    # 예쁜 스타일(CSS) 추가
+    # 마크다운을 HTML로 1차 변환
+    html_content = markdown.markdown(markdown_text, extensions=['tables'])
+    
+    # HTML 템플릿에 MathJax(수식 번역기) 스크립트 추가
     styled_html = f"""
+    <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
+        <title>수학 분석 결과</title>
+        <script>
+        MathJax = {{
+          tex: {{
+            inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+            displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+          }},
+          svg: {{
+            fontCache: 'global'
+          }}
+        }};
+        </script>
+        <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+        
         <style>
-            body {{ font-family: 'Malgun Gothic', sans-serif; line-height: 1.6; padding: 20px; }}
-            table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; vertical-align: top; }}
-            th {{ background-color: #f2f2f2; font-weight: bold; text-align: center; }}
-            tr:nth-child(even) {{ background-color: #f9f9f9; }}
-            h3 {{ border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 30px; }}
+            body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; padding: 40px; max-width: 1200px; margin: 0 auto; }}
+            h1 {{ text-align: center; border-bottom: 3px solid #333; padding-bottom: 20px; }}
+            h3 {{ background-color: #f8f9fa; padding: 10px; border-left: 5px solid #007bff; margin-top: 40px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 30px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            th, td {{ border: 1px solid #ddd; padding: 15px; text-align: left; vertical-align: top; }}
+            th {{ background-color: #007bff; color: white; font-weight: bold; text-align: center; white-space: nowrap; }}
+            tr:nth-child(even) {{ background-color: #f2f2f2; }}
+            tr:hover {{ background-color: #e9ecef; }}
             .keyword {{ font-weight: bold; color: #d32f2f; }}
         </style>
     </head>
     <body>
         <h1>📊 수학 기출 vs 부교재 정밀 분석 결과</h1>
-        {html}
+        {html_content}
     </body>
     </html>
     """
@@ -92,13 +111,12 @@ def create_html_download(markdown_text):
 
 # 4. 분석 로직
 if exam_file and textbook_file and api_key:
-    # 세션 상태 초기화 (결과 저장용)
     if 'full_analysis_result' not in st.session_state:
         st.session_state['full_analysis_result'] = ""
 
     if st.button("서식 통일 분석 시작하기 🚀", use_container_width=True):
         status_text = st.empty()
-        st.session_state['full_analysis_result'] = "" # 초기화
+        st.session_state['full_analysis_result'] = ""
         
         try:
             def upload_to_gemini(uploaded_file, mime_type="application/pdf"):
@@ -136,22 +154,21 @@ if exam_file and textbook_file and api_key:
                 ("22번 ~ 마지막", "기출문제의 22번부터 서술형 끝번(마지막) 문항까지")
             ]
 
-            full_accumulated_text = "" # 전체 결과 모으기용
+            full_accumulated_text = ""
 
             for i, (title, range_desc) in enumerate(batches):
                 status_text.info(f"🔄 {title} 정밀 분석 중... ({i+1}/{len(batches)})")
                 
-                # 화면 출력
                 if i > 0:
                     st.markdown("---")
                 st.markdown(f"### 📋 {title}")
                 
-                # 저장용 텍스트에도 제목 추가
                 batch_header = f"\n\n### 📋 {title}\n\n"
                 full_accumulated_text += batch_header
                 
                 placeholder = st.empty()
                 
+                # --- [서식 통일 프롬프트 유지] ---
                 prompt = f"""
                 당신은 수학 분석 전문가입니다. 
                 두 PDF를 비교하여 **{range_desc}** 상세 분석하세요.
@@ -165,7 +182,7 @@ if exam_file and textbook_file and api_key:
                 **[필수 테이블 양식]**
                 | 문항 | 기출문제 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | (번호) | **[원본]**<br>(텍스트 기재, 그림 묘사 금지)<br><br>**[요약]**<br>(내용 요약) | **[원본]**<br>p.00 000번<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | (번호) | **[원본]**<br>(텍스트 기재, 그림 묘사 금지)<br><br>**[요약]**<br>(핵심 요약) | **[원본]**<br>p.00 000번<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 
                 **[주의사항]**
                 - '[원본]' 작성 시 그래프나 도형 묘사는 생략하세요.
@@ -183,22 +200,20 @@ if exam_file and textbook_file and api_key:
                 except Exception as e:
                     pass
                 
-                # 배치 끝날 때마다 전체 텍스트에 추가
                 full_accumulated_text += chunk_text
 
-            # 모든 루프가 끝나면 세션에 저장
             st.session_state['full_analysis_result'] = full_accumulated_text
             status_text.success("✅ 모든 문항의 상세 분석이 완료되었습니다! 아래 버튼을 눌러 저장하세요.")
 
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
-    # --- 다운로드 버튼 (분석 결과가 있을 때만 표시) ---
+    # --- 다운로드 버튼 ---
     if st.session_state['full_analysis_result']:
         st.divider()
         st.subheader("💾 분석 결과 저장")
         
-        # HTML로 변환
+        # HTML 변환 (LaTeX 지원 포함)
         html_data = create_html_download(st.session_state['full_analysis_result'])
         
         col_d1, col_d2 = st.columns([1, 4])
@@ -206,8 +221,8 @@ if exam_file and textbook_file and api_key:
             st.download_button(
                 label="📥 HTML 파일로 다운로드",
                 data=html_data,
-                file_name="수학_기출_분석_결과.html",
+                file_name="수학_기출_분석_결과(수식지원).html",
                 mime="text/html"
             )
         with col_d2:
-            st.info("💡 **팁:** 다운로드 받은 HTML 파일을 열고, **[Ctrl + P]**를 눌러 **'PDF로 저장'**을 선택하면 깔끔한 PDF 문서를 만들 수 있습니다.")
+            st.info("💡 **팁:** 다운로드 받은 파일을 열면 수식이 예쁘게 보입니다. (인터넷 연결 필요)")
