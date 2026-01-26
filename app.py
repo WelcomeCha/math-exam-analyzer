@@ -30,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (수식 지원)")
+st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (완성본)")
 
 # 2. API 키 입력
 with st.sidebar:
@@ -64,12 +64,11 @@ def wait_for_files_active(files):
         bar.progress((i + 1) / len(files))
     st.success("✅ 파일 준비 완료! 정밀 분석을 시작합니다.")
 
-# --- 🔥 [핵심 수정] 수식(LaTeX) 지원 HTML 변환 함수 ---
+# --- HTML 변환 함수 (수식 지원) ---
 def create_html_download(markdown_text):
-    # 마크다운을 HTML로 1차 변환
+    # 마크다운을 HTML로 변환 (tables 확장 필수)
     html_content = markdown.markdown(markdown_text, extensions=['tables'])
     
-    # HTML 템플릿에 MathJax(수식 번역기) 스크립트 추가
     styled_html = f"""
     <!DOCTYPE html>
     <html>
@@ -88,16 +87,14 @@ def create_html_download(markdown_text):
         }};
         </script>
         <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-        
         <style>
             body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; padding: 40px; max-width: 1200px; margin: 0 auto; }}
             h1 {{ text-align: center; border-bottom: 3px solid #333; padding-bottom: 20px; }}
-            h3 {{ background-color: #f8f9fa; padding: 10px; border-left: 5px solid #007bff; margin-top: 40px; }}
-            table {{ border-collapse: collapse; width: 100%; margin-bottom: 30px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            h3 {{ background-color: #f8f9fa; padding: 10px; border-left: 5px solid #007bff; margin-top: 40px; margin-bottom: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 30px; }}
             th, td {{ border: 1px solid #ddd; padding: 15px; text-align: left; vertical-align: top; }}
             th {{ background-color: #007bff; color: white; font-weight: bold; text-align: center; white-space: nowrap; }}
             tr:nth-child(even) {{ background-color: #f2f2f2; }}
-            tr:hover {{ background-color: #e9ecef; }}
             .keyword {{ font-weight: bold; color: #d32f2f; }}
         </style>
     </head>
@@ -114,7 +111,7 @@ if exam_file and textbook_file and api_key:
     if 'full_analysis_result' not in st.session_state:
         st.session_state['full_analysis_result'] = ""
 
-    if st.button("서식 통일 분석 시작하기 🚀", use_container_width=True):
+    if st.button("분석 시작하기 🚀", use_container_width=True):
         status_text = st.empty()
         st.session_state['full_analysis_result'] = ""
         
@@ -163,29 +160,32 @@ if exam_file and textbook_file and api_key:
                     st.markdown("---")
                 st.markdown(f"### 📋 {title}")
                 
+                # [중요] 표 깨짐 방지를 위한 강제 줄바꿈(\n\n) 추가
                 batch_header = f"\n\n### 📋 {title}\n\n"
                 full_accumulated_text += batch_header
                 
                 placeholder = st.empty()
                 
-                # --- [서식 통일 프롬프트 유지] ---
+                # --- 🔥 프롬프트 수정: 부교재 원문 포함 & 표 깨짐 방지 ---
                 prompt = f"""
                 당신은 수학 분석 전문가입니다. 
                 두 PDF를 비교하여 **{range_desc}** 상세 분석하세요.
                 
                 **[출력 서식 가이드라인 - 엄격 준수]**
-                모든 문항에 대해 아래 표기법을 토씨 하나 틀리지 말고 따르세요.
+                1. **부교재 문항 표기:** - 첫 줄: **`p.페이지번호 문항번호`** (예: p.80 285번)
+                   - 두 번째 줄부터: **[원본]** 태그 아래에 **부교재 문제 원문을 반드시 텍스트로 적으세요.** (그림 묘사 제외)
                 
-                1. **부교재 문항 표기:** 반드시 **`p.페이지번호 문항번호`** 형태로만 적으세요. (예: p.80 285번)
-                2. **변형 포인트 표기:** 반드시 **글머리 기호(•)**를 사용하고, 키워드는 굵게 처리하세요. (예: • **숫자 변형**: 설명)
+                2. **변형 포인트 표기:** - 반드시 **글머리 기호(•)**를 사용하고, 키워드는 굵게 처리하세요.
                 
                 **[필수 테이블 양식]**
+                **반드시 표 앞에 빈 줄을 하나 띄우고 표를 작성하세요.**
+                
                 | 문항 | 기출문제 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | (번호) | **[원본]**<br>(텍스트 기재, 그림 묘사 금지)<br><br>**[요약]**<br>(핵심 요약) | **[원본]**<br>p.00 000번<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | (번호) | **[원본]**<br>(기출 문제 텍스트)<br><br>**[요약]**<br>(핵심 요약) | **[원본]**<br>p.00 000번<br>(부교재 문제 원문 텍스트 필수 기재)<br><br>**[요약]**<br>(내용 요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 
                 **[주의사항]**
-                - '[원본]' 작성 시 그래프나 도형 묘사는 생략하세요.
+                - '[원본]' 작성 시 그래프나 도형 묘사는 생략하고 텍스트만 적으세요.
                 - 해당 문제가 없으면 "해당 없음"만 적으세요.
                 """
                 
@@ -200,7 +200,8 @@ if exam_file and textbook_file and api_key:
                 except Exception as e:
                     pass
                 
-                full_accumulated_text += chunk_text
+                # 배치 끝날 때도 줄바꿈 확실하게 추가
+                full_accumulated_text += chunk_text + "\n\n"
 
             st.session_state['full_analysis_result'] = full_accumulated_text
             status_text.success("✅ 모든 문항의 상세 분석이 완료되었습니다! 아래 버튼을 눌러 저장하세요.")
@@ -213,7 +214,6 @@ if exam_file and textbook_file and api_key:
         st.divider()
         st.subheader("💾 분석 결과 저장")
         
-        # HTML 변환 (LaTeX 지원 포함)
         html_data = create_html_download(st.session_state['full_analysis_result'])
         
         col_d1, col_d2 = st.columns([1, 4])
@@ -221,8 +221,8 @@ if exam_file and textbook_file and api_key:
             st.download_button(
                 label="📥 HTML 파일로 다운로드",
                 data=html_data,
-                file_name="수학_기출_분석_결과(수식지원).html",
+                file_name="수학_기출_분석_결과(최종).html",
                 mime="text/html"
             )
         with col_d2:
-            st.info("💡 **팁:** 다운로드 받은 파일을 열면 수식이 예쁘게 보입니다. (인터넷 연결 필요)")
+            st.info("💡 **팁:** 다운로드 받은 파일을 열고 '인쇄(Ctrl+P) -> PDF로 저장' 하시면 됩니다.")
