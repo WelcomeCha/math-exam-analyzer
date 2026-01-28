@@ -30,16 +30,34 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (대용량 지원)")
+st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기")
 
-# 2. API 키 입력
+# 2. API 키 및 모델 설정
 with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key를 입력하세요", type="password")
+    
+    st.divider()
+    
+    # --- 🔥 [수정] 사용자 목록에 있는 '실제 모델'로만 구성 ---
+    st.subheader("🤖 AI 모델 선택")
+    model_option = st.radio(
+        "상황에 맞춰 선택하세요:",
+        ("품질 우선 (2.5 Pro)", "대용량/속도 (2.5 Flash)"),
+        index=0,
+        help="평소엔 2.5 Pro를 쓰시고, 파일이 커서 에러가 나면 2.5 Flash를 쓰세요."
+    )
+
+    # 선택에 따른 실제 모델명 매핑 (사용자 목록 기반)
+    if "Pro" in model_option:
+        model_name = "gemini-2.5-pro"
+    else:
+        model_name = "gemini-2.5-flash" # 목록에 있는 모델 사용
+    
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
         genai.configure(api_key=api_key)
-        st.success("API 키 확인 완료!")
+        st.success(f"현재 모드: {model_name}")
     else:
         st.warning("API 키를 먼저 입력해주세요.")
 
@@ -53,21 +71,20 @@ with col2:
     st.subheader("📘 부교재 PDF")
     textbook_file = st.file_uploader("부교재 파일을 업로드하세요", type=['pdf'], key="text")
 
-# --- 🔥 [핵심 수정] 대용량 파일 처리 안전장치 ---
+# 대용량 파일 대기 함수
 def wait_for_files_active(files):
     st.info("📚 대용량 파일 처리를 기다리는 중입니다... (1분 이상 소요될 수 있습니다)")
     bar = st.progress(0)
     for i, name in enumerate(file.name for file in files):
         file = genai.get_file(name)
         while file.state.name == "PROCESSING":
-            time.sleep(5) # 대용량 파일은 확인 주기를 5초로 늘림
+            time.sleep(5)
             file = genai.get_file(name)
         
-        # [중요] 파일 처리가 실패했는지 확인 (이게 없으면 400 에러 남)
         if file.state.name == "FAILED":
             st.error(f"❌ 파일 처리 실패: {file.uri}")
-            st.error("구글 서버가 이 PDF를 읽는 데 실패했습니다. 파일이 너무 크거나(100MB↑), 암호가 걸려있거나, 손상된 파일일 수 있습니다.")
-            st.stop() # 프로그램 즉시 중단
+            st.error("구글 서버가 이 PDF를 읽는 데 실패했습니다.")
+            st.stop()
 
         bar.progress((i + 1) / len(files))
     st.success("✅ 파일 준비 완료! 정밀 분석을 시작합니다.")
@@ -122,7 +139,6 @@ if exam_file and textbook_file and api_key:
         st.session_state['full_analysis_result'] = ""
         
         try:
-            # 임시 파일 저장 (메모리 버퍼 최적화)
             def upload_to_gemini(uploaded_file, mime_type="application/pdf"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
@@ -133,7 +149,6 @@ if exam_file and textbook_file and api_key:
             exam_ref = upload_to_gemini(exam_file)
             textbook_ref = upload_to_gemini(textbook_file)
             
-            # 대용량 파일 대기 함수 실행
             wait_for_files_active([exam_ref, textbook_ref])
 
             safety_settings = {
@@ -143,8 +158,9 @@ if exam_file and textbook_file and api_key:
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
 
+            # --- 🔥 검증된 모델 사용 ---
             model = genai.GenerativeModel(
-                "gemini-2.5-pro",
+                model_name, # 위에서 선택한 변수 (gemini-2.5-pro 또는 gemini-2.5-flash)
                 generation_config={"temperature": 0.0, "max_output_tokens": 8192},
                 safety_settings=safety_settings
             )
@@ -197,15 +213,19 @@ if exam_file and textbook_file and api_key:
                 """
                 
                 chunk_text = ""
-                stream = model.generate_content([prompt, exam_ref, textbook_ref], stream=True)
-                
                 try:
+                    stream = model.generate_content([prompt, exam_ref, textbook_ref], stream=True)
                     for chunk in stream:
                         if chunk.text:
                             chunk_text += chunk.text
                             placeholder.markdown(chunk_text, unsafe_allow_html=True)
                 except Exception as e:
-                    pass
+                    if "400" in str(e) and "Pro" in model_name:
+                        st.error("🚨 2.5 Pro 모델 용량 초과!")
+                        st.warning("👈 왼쪽 사이드바에서 **'대용량/속도 (2.5 Flash)'**를 선택하고 다시 시도하세요.")
+                        st.stop()
+                    else:
+                        st.error(f"오류 발생: {e}")
                 
                 full_accumulated_text += chunk_text + "\n\n"
 
