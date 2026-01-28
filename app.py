@@ -30,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (완성본)")
+st.title("💯 고등학교 수학 기출 vs 부교재 정밀 분석기 (대용량 지원)")
 
 # 2. API 키 입력
 with st.sidebar:
@@ -53,22 +53,28 @@ with col2:
     st.subheader("📘 부교재 PDF")
     textbook_file = st.file_uploader("부교재 파일을 업로드하세요", type=['pdf'], key="text")
 
+# --- 🔥 [핵심 수정] 대용량 파일 처리 안전장치 ---
 def wait_for_files_active(files):
-    st.info("📚 파일 처리를 기다리는 중입니다...")
+    st.info("📚 대용량 파일 처리를 기다리는 중입니다... (1분 이상 소요될 수 있습니다)")
     bar = st.progress(0)
     for i, name in enumerate(file.name for file in files):
         file = genai.get_file(name)
         while file.state.name == "PROCESSING":
-            time.sleep(2)
+            time.sleep(5) # 대용량 파일은 확인 주기를 5초로 늘림
             file = genai.get_file(name)
+        
+        # [중요] 파일 처리가 실패했는지 확인 (이게 없으면 400 에러 남)
+        if file.state.name == "FAILED":
+            st.error(f"❌ 파일 처리 실패: {file.uri}")
+            st.error("구글 서버가 이 PDF를 읽는 데 실패했습니다. 파일이 너무 크거나(100MB↑), 암호가 걸려있거나, 손상된 파일일 수 있습니다.")
+            st.stop() # 프로그램 즉시 중단
+
         bar.progress((i + 1) / len(files))
     st.success("✅ 파일 준비 완료! 정밀 분석을 시작합니다.")
 
-# --- HTML 변환 함수 (수식 지원) ---
+# HTML 변환 함수
 def create_html_download(markdown_text):
-    # 마크다운을 HTML로 변환 (tables 확장 필수)
     html_content = markdown.markdown(markdown_text, extensions=['tables'])
-    
     styled_html = f"""
     <!DOCTYPE html>
     <html>
@@ -116,6 +122,7 @@ if exam_file and textbook_file and api_key:
         st.session_state['full_analysis_result'] = ""
         
         try:
+            # 임시 파일 저장 (메모리 버퍼 최적화)
             def upload_to_gemini(uploaded_file, mime_type="application/pdf"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
@@ -125,6 +132,8 @@ if exam_file and textbook_file and api_key:
 
             exam_ref = upload_to_gemini(exam_file)
             textbook_ref = upload_to_gemini(textbook_file)
+            
+            # 대용량 파일 대기 함수 실행
             wait_for_files_active([exam_ref, textbook_ref])
 
             safety_settings = {
@@ -160,13 +169,11 @@ if exam_file and textbook_file and api_key:
                     st.markdown("---")
                 st.markdown(f"### 📋 {title}")
                 
-                # [중요] 표 깨짐 방지를 위한 강제 줄바꿈(\n\n) 추가
                 batch_header = f"\n\n### 📋 {title}\n\n"
                 full_accumulated_text += batch_header
                 
                 placeholder = st.empty()
                 
-                # --- 🔥 프롬프트 수정: 부교재 원문 포함 & 표 깨짐 방지 ---
                 prompt = f"""
                 당신은 수학 분석 전문가입니다. 
                 두 PDF를 비교하여 **{range_desc}** 상세 분석하세요.
@@ -200,7 +207,6 @@ if exam_file and textbook_file and api_key:
                 except Exception as e:
                     pass
                 
-                # 배치 끝날 때도 줄바꿈 확실하게 추가
                 full_accumulated_text += chunk_text + "\n\n"
 
             st.session_state['full_analysis_result'] = full_accumulated_text
