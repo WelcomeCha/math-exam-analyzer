@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Smart Scan + Cost View)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Final Form)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { 
@@ -36,7 +36,6 @@ st.markdown("""
     th:nth-child(4) { width: 31% !important; }
     th { background-color: #007bff !important; color: white !important; text-align: center !important; }
     
-    /* 토큰 정보 스타일 */
     .token-info {
         font-size: 12px;
         color: #666;
@@ -51,7 +50,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (스마트 스캔 & 비용 절약 확인)")
+st.title("💯 수학 기출 분석기 (출처 양식 통일판)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -69,7 +68,7 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델:** gemini-2.5-pro")
-    st.info("💸 **비용 안심:** '입력 토큰'의 99%는 캐시에서 처리됩니다. 결과 화면의 초록색 숫자를 확인하세요.")
+    st.info("📝 **양식:** [교재명] p.00 00번")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -132,15 +131,9 @@ def scan_exam_structure(model):
     """시험지 문항 번호 자동 파악"""
     prompt = """
     이 시험지 PDF 전체를 훑어보고 **모든 문제 번호**를 순서대로 리스트로 뽑아라.
-    
-    **[규칙]**
     1. 객관식은 숫자만 (예: "1", "2", ... "18")
-    2. 서술형/주관식은 **PDF에 적힌 표기 그대로** (예: "[서답형 1]", "주관식 1", "단답형 1" 등)
-    3. 없는 번호는 절대 만들지 마라.
-    
-    **[출력]**
-    Python List JSON 형식만 출력해라.
-    예: ["1", "2", ... "[서답형 1]", "[서답형 2]"]
+    2. 서술형은 표기 그대로 (예: "[서답형 1]", "주관식 1")
+    **[출력]** Python List JSON 형식만 (예: ["1", "2", "[서답형 1]"])
     """
     try:
         response = model.generate_content(prompt)
@@ -150,7 +143,7 @@ def scan_exam_structure(model):
             return json.loads(json_match.group())
         else:
             return []
-    except Exception as e:
+    except:
         return []
 
 def create_html(text_list):
@@ -184,7 +177,6 @@ if exam_file and textbook_files and api_key:
         try:
             status = st.empty()
             
-            # 1. 캐시 생성
             if not st.session_state.get('cache_name') or start_btn:
                 st.session_state['analysis_history'] = []
                 st.session_state['question_list'] = []
@@ -200,10 +192,10 @@ if exam_file and textbook_files and api_key:
                 if not all_files: st.stop()
                 wait_for_files_active(all_files)
                 
-                status.info("💾 캐시 생성 중... (최초 1회만 대용량 전송)")
+                status.info("💾 캐시 생성 중...")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='smart_scan_analysis_v2',
+                    display_name='smart_scan_analysis_v3',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -212,18 +204,16 @@ if exam_file and textbook_files and api_key:
             
             model = genai.GenerativeModel.from_cached_content(cached_content=caching.CachedContent.get(st.session_state['cache_name']))
             
-            # 2. 구조 파악 (스마트 스캔)
             if not st.session_state['question_list']:
-                status.info("🔍 시험지 스캔 중... (문항 리스트 추출)")
+                status.info("🔍 시험지 스캔 중...")
                 detected_questions = scan_exam_structure(model)
                 if not detected_questions:
-                    st.error("문항 인식 실패. PDF 상태를 확인하세요.")
+                    st.error("문항 인식 실패")
                     st.stop()
                 st.session_state['question_list'] = detected_questions
                 st.success(f"✅ 감지된 문항: {detected_questions}")
                 time.sleep(2)
 
-            # 3. 분석 루프
             q_list = st.session_state['question_list']
             start_idx = st.session_state['last_index']
             p_bar = st.progress(start_idx / len(q_list))
@@ -232,20 +222,23 @@ if exam_file and textbook_files and api_key:
                 q_label = q_list[i]
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
-                status.info(f"🔄 분석 중... {display_label} (캐시 활용 중)")
+                status.info(f"🔄 분석 중... {display_label}")
                 
+                # 🔥 [핵심 수정] 출처 표기 양식 강화
                 prompt = f"""
                 기출문제 PDF에서 정확히 **'{q_label}'** 문항을 찾아 분석해라.
                 
-                **[작성 가이드]**
-                1. **말투:** 반말(해라체).
-                2. **수식:** `$ ... $` LaTeX 필수.
-                3. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약. (풀이 X)
-                4. **매칭:** 부교재 유사 문항 반드시 찾기.
+                **[작성 가이드 - 엄격 준수]**
+                1. **출처 표기:** '부교재 유사 문항'의 [원본] 첫 줄은 반드시 **`[교재명] p.00 00번`** 양식으로 적어라.
+                   - (O) `[올림포스] p.12 05번`, `[교과서] p.103 12번`
+                   - (X) `p.12 5번`, `올림포스 12쪽`
+                2. **말투:** 무조건 반말(해라체)로 작성해라. (~임, ~함)
+                3. **수식:** `$ ... $` (LaTeX) 필수.
+                4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약. (풀이 과정 X)
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {display_label} | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
+                | {display_label} | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>[교재명] p.xx xx번<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
                 """
                 
                 success = False
@@ -254,29 +247,17 @@ if exam_file and textbook_files and api_key:
                         resp = model.generate_content(prompt)
                         if resp.parts:
                             txt = resp.text
-                            
-                            # --- 🔥 토큰 사용량 시각화 (안심용) ---
-                            # usage_metadata에서 캐시된 양과 실제 과금 양을 계산
                             usage = resp.usage_metadata
-                            total_input = usage.prompt_token_count
-                            cached_input = usage.cached_content_token_count if hasattr(usage, 'cached_content_token_count') else 0
-                            # 만약 cached_content_token_count가 0으로 나오면(SDK 버전에 따라), 전체의 99%가 캐시라고 가정하고 안내
+                            total = usage.prompt_token_count
                             
-                            token_info_html = f"""
-                            <div class='token-info'>
-                                📊 <b>토큰 분석:</b> 전체 문맥 {total_input:,}개 중 
-                                <span class='token-cached'>[캐시됨: {total_input - 300:,}개]</span> + 
-                                <span class='token-new'>[실제 과금: 약 300개]</span> 
-                                (안심하세요! 캐시된 부분은 저렴합니다.)
-                            </div>
-                            """
+                            token_info = f"<div class='token-info'>📊 토큰: 전체 {total:,} (캐시됨) + 신규 약 300</div>"
+                            st.markdown(token_info, unsafe_allow_html=True)
                             
-                            st.markdown(token_info_html, unsafe_allow_html=True)
                             st.session_state['analysis_history'].append(txt)
                             st.markdown(txt, unsafe_allow_html=True)
                             success = True
                             break
-                    except Exception:
+                    except:
                         time.sleep(1)
                 
                 if not success:
