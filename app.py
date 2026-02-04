@@ -10,7 +10,7 @@ import pypdf
 import datetime
 
 # 1. 설정
-st.set_page_config(page_title="수학 기출 분석기 (Split+Caching)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro Final)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { font-family: 'Malgun Gothic', sans-serif !important; }
@@ -19,7 +19,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (분할 업로드 + 캐싱)")
+st.title("💯 수학 기출 분석기 (2.5 Pro 고정 + 분할 업로드)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -34,8 +34,8 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델:** Gemini 1.5 Pro (최신 002)")
-    st.info("⚡ **안전 업로드:** 대용량 파일은 30쪽씩 분할하여 올린 후 캐싱합니다.")
+    st.info("🔒 **모델 고정:** gemini-2.5-pro")
+    st.info("⚡ **업로드:** 분할 업로드(Chunking) + 상태 확인(Wait) 적용")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -50,13 +50,13 @@ with col2:
 
 # --- 함수 정의 ---
 
-# 🔥 [핵심 복구] 파일을 잘라서 업로드하는 함수
 def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
+    """대용량 파일을 작게 잘라서 업로드"""
     pdf_reader = pypdf.PdfReader(uploaded_file)
     total_pages = len(pdf_reader.pages)
     file_label = uploaded_file.name
     
-    # 페이지 적으면 그냥 통으로 (단, 함수 반환형 통일 위해 리스트로)
+    # 페이지 적으면 그냥 통으로 (리스트 반환)
     if total_pages <= chunk_size_pages:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_file.getvalue())
@@ -81,15 +81,11 @@ def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
             tmp_path = tmp.name
             
         try:
-            # 부분 파일 업로드
             file_ref = genai.upload_file(tmp_path, mime_type="application/pdf")
             uploaded_chunks.append(file_ref)
-            
-            # 진행률 표시
             bar.progress(min((start_page + chunk_size_pages) / total_pages, 1.0))
-            
         except Exception as e:
-            st.error(f"분할 업로드 중 오류: {e}")
+            st.error(f"분할 업로드 오류: {e}")
             return None
             
     status_text.empty()
@@ -97,19 +93,19 @@ def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
     return uploaded_chunks
 
 def wait_for_files_active(files):
-    """모든 파일 조각이 ACTIVE 될 때까지 대기"""
+    """모든 파일이 ACTIVE 상태가 될 때까지 확실하게 대기"""
     bar = st.progress(0)
     status_text = st.empty()
     
     for i, f in enumerate(files):
         file_obj = genai.get_file(f.name)
         while file_obj.state.name == "PROCESSING":
-            status_text.info(f"⏳ 서버 처리 중... ({i+1}/{len(files)})")
-            time.sleep(1) # 대기 시간 단축
+            status_text.info(f"⏳ 서버 처리 대기 중... ({i+1}/{len(files)})")
+            time.sleep(2) 
             file_obj = genai.get_file(f.name)
         
         if file_obj.state.name != "ACTIVE":
-            st.error(f"❌ 파일 처리 실패: {file_obj.uri}")
+            st.error(f"❌ 파일 처리 실패: {file_obj.uri} (State: {file_obj.state.name})")
             st.stop()
         
         bar.progress((i + 1) / len(files))
@@ -152,14 +148,14 @@ if exam_file and textbook_files and api_key:
             # --- 캐시 생성 로직 ---
             if not st.session_state.get('cache_name') or start_btn:
                 
-                # 1. 파일 분할 업로드 (기출 + 부교재들)
+                # 1. 파일 분할 업로드
                 all_files = []
                 
                 # 기출문제 업로드
                 exam_chunks = split_and_upload_pdf(exam_file)
                 if exam_chunks: all_files.extend(exam_chunks)
                 
-                # 부교재 업로드 (여러 권일 수 있음)
+                # 부교재 업로드
                 for tf in textbook_files:
                     tb_chunks = split_and_upload_pdf(tf)
                     if tb_chunks: all_files.extend(tb_chunks)
@@ -168,16 +164,17 @@ if exam_file and textbook_files and api_key:
                     st.error("파일 업로드 실패")
                     st.stop()
 
-                # 2. 파일 상태 확인 (ACTIVE 대기)
+                # 2. 파일 상태 확인 (ACTIVE 필수!)
+                # 여기서 400 Invalid Argument를 막습니다.
                 wait_for_files_active(all_files)
                 
-                status.info("💾 컨텍스트 캐시 생성 중...")
+                status.info("💾 2.5 Pro 컨텍스트 캐시 생성 중...")
                 
                 try:
-                    # 🔥 [수정] 1.5 Pro 최신 모델 사용 (캐싱 지원)
+                    # 🔥 [절대 고정] 사용자가 지정한 모델명 사용
                     cache = caching.CachedContent.create(
-                        model='models/gemini-1.5-pro-002',
-                        display_name='math_exam_split_cache',
+                        model='models/gemini-2.5-pro',
+                        display_name='math_exam_analysis_final_v2',
                         system_instruction="""
                         당신은 수학 분석가입니다. 
                         [원칙]
@@ -185,7 +182,7 @@ if exam_file and textbook_files and api_key:
                         2. 부교재 유사 문항 반드시 매칭 (없으면 가장 비슷한 개념이라도).
                         3. 기출에 없는 번호일 때만 "SKIP".
                         """,
-                        contents=all_files, # 여기에 쪼개진 파일 조각들이 리스트로 들어감
+                        contents=all_files,
                         ttl=datetime.timedelta(minutes=60)
                     )
                     st.session_state['cache_name'] = cache.name
@@ -193,9 +190,8 @@ if exam_file and textbook_files and api_key:
                 
                 except Exception as e:
                     st.error(f"캐시 생성 실패: {e}")
-                    # 400 에러 시 팁 제공
                     if "400" in str(e):
-                        st.warning("모델명 혹은 파일 상태 문제일 수 있습니다. 1.5-pro-002 모델을 사용 중인지 확인하세요.")
+                        st.warning("파일이 아직 준비되지 않았거나, 모델이 캐싱을 지원하지 않는 일시적 오류일 수 있습니다. 잠시 후 다시 시도해보세요.")
                     st.stop()
 
             else:
@@ -231,7 +227,7 @@ if exam_file and textbook_files and api_key:
                         
                         if resp.parts:
                             txt = resp.text
-                            # SKIP 검증 (너무 빨리 SKIP하면 의심)
+                            # SKIP 검증
                             if "SKIP" in txt and i < 18: pass 
                             
                             st.session_state['analysis_history'].append(txt)
