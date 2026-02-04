@@ -9,17 +9,49 @@ import markdown
 import pypdf
 import datetime
 
-# 1. 설정
-st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro Final)", layout="wide")
+# 1. 설정 및 스타일링 (표 너비 고정 CSS 포함)
+st.set_page_config(page_title="수학 기출 분석기 (Final Layout)", layout="wide")
 st.markdown("""
     <style>
-    div[data-testid="stMarkdownContainer"] p, td, th { font-family: 'Malgun Gothic', sans-serif !important; }
+    /* 폰트 및 기본 설정 */
+    div[data-testid="stMarkdownContainer"] p, td, th { 
+        font-family: 'Malgun Gothic', sans-serif !important; 
+        font-size: 15px !important;
+        line-height: 1.6 !important;
+    }
+    
+    /* 표 스타일 강제 고정 */
+    table {
+        width: 100% !important;
+        table-layout: fixed !important; /* 열 너비 고정 */
+        border-collapse: collapse !important;
+    }
+    th, td {
+        border: 1px solid #ddd !important;
+        padding: 12px !important;
+        vertical-align: top !important;
+        word-wrap: break-word !important; /* 긴 수식 줄바꿈 */
+    }
+    
+    /* 열 너비 비율 설정 (8:30:31:31) */
+    th:nth-child(1) { width: 8% !important; }
+    th:nth-child(2) { width: 30% !important; }
+    th:nth-child(3) { width: 31% !important; }
+    th:nth-child(4) { width: 31% !important; }
+    
+    /* 헤더 스타일 */
+    th {
+        background-color: #f0f2f6 !important;
+        font-weight: bold !important;
+        text-align: center !important;
+    }
+    
     .success-log { color: #2e7d32; font-weight: bold; }
     .error-log { color: #d32f2f; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (2.5 Pro 고정 + 분할 업로드)")
+st.title("💯 수학 기출 분석기 (양식 고정 + LaTeX 완벽 적용)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -35,7 +67,7 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델 고정:** gemini-2.5-pro")
-    st.info("⚡ **업로드:** 분할 업로드(Chunking) + 상태 확인(Wait) 적용")
+    st.info("🎨 **양식:** 표 너비 고정, LaTeX 필수, 풀이 생략")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -51,12 +83,10 @@ with col2:
 # --- 함수 정의 ---
 
 def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
-    """대용량 파일을 작게 잘라서 업로드"""
     pdf_reader = pypdf.PdfReader(uploaded_file)
     total_pages = len(pdf_reader.pages)
     file_label = uploaded_file.name
     
-    # 페이지 적으면 그냥 통으로 (리스트 반환)
     if total_pages <= chunk_size_pages:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_file.getvalue())
@@ -93,7 +123,6 @@ def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
     return uploaded_chunks
 
 def wait_for_files_active(files):
-    """모든 파일이 ACTIVE 상태가 될 때까지 확실하게 대기"""
     bar = st.progress(0)
     status_text = st.empty()
     
@@ -105,7 +134,7 @@ def wait_for_files_active(files):
             file_obj = genai.get_file(f.name)
         
         if file_obj.state.name != "ACTIVE":
-            st.error(f"❌ 파일 처리 실패: {file_obj.uri} (State: {file_obj.state.name})")
+            st.error(f"❌ 파일 처리 실패: {file_obj.uri}")
             st.stop()
         
         bar.progress((i + 1) / len(files))
@@ -118,11 +147,27 @@ def wait_for_files_active(files):
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
+    # HTML 파일 다운로드 시에도 표 너비 고정 스타일 적용
     return f"""
     <html><head><meta charset="utf-8">
-    <script>MathJax={{tex:{{inlineMath:[['$','$']],displayMath:[['$$','$$']]}},svg:{{fontCache:'global'}} }};</script>
+    <script>
+    MathJax = {{
+      tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] }},
+      svg: {{ fontCache: 'global' }} 
+    }};
+    </script>
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    <style>body{{font-family:'Malgun Gothic';padding:40px;line-height:1.6}} table{{border-collapse:collapse;width:100%;margin-bottom:30px}} th,td{{border:1px solid #ddd;padding:15px}} th{{background:#007bff;color:white;text-align:center}}</style>
+    <style>
+        body {{ font-family: 'Malgun Gothic', sans-serif; line-height: 1.6; padding: 40px; max-width: 1400px; margin: 0 auto; }}
+        table {{ border-collapse: collapse; width: 100%; table-layout: fixed; margin-bottom: 30px; }}
+        th, td {{ border: 1px solid #ddd; padding: 15px; text-align: left; vertical-align: top; word-wrap: break-word; }}
+        th {{ background-color: #007bff; color: white; text-align: center; }}
+        th:nth-child(1) {{ width: 8%; }}
+        th:nth-child(2) {{ width: 30%; }}
+        th:nth-child(3) {{ width: 31%; }}
+        th:nth-child(4) {{ width: 31%; }}
+        tr:nth-child(even) {{ background-color: #f2f2f2; }}
+    </style>
     </head><body>{html_body}</body></html>
     """
 
@@ -145,17 +190,12 @@ if exam_file and textbook_files and api_key:
         try:
             status = st.empty()
             
-            # --- 캐시 생성 로직 ---
+            # --- 캐시 생성 ---
             if not st.session_state.get('cache_name') or start_btn:
-                
-                # 1. 파일 분할 업로드
                 all_files = []
-                
-                # 기출문제 업로드
+                # 분할 업로드
                 exam_chunks = split_and_upload_pdf(exam_file)
                 if exam_chunks: all_files.extend(exam_chunks)
-                
-                # 부교재 업로드
                 for tf in textbook_files:
                     tb_chunks = split_and_upload_pdf(tf)
                     if tb_chunks: all_files.extend(tb_chunks)
@@ -164,23 +204,22 @@ if exam_file and textbook_files and api_key:
                     st.error("파일 업로드 실패")
                     st.stop()
 
-                # 2. 파일 상태 확인 (ACTIVE 필수!)
-                # 여기서 400 Invalid Argument를 막습니다.
                 wait_for_files_active(all_files)
                 
                 status.info("💾 2.5 Pro 컨텍스트 캐시 생성 중...")
                 
                 try:
-                    # 🔥 [절대 고정] 사용자가 지정한 모델명 사용
                     cache = caching.CachedContent.create(
                         model='models/gemini-2.5-pro',
-                        display_name='math_exam_analysis_final_v2',
+                        display_name='math_exam_fixed_layout',
                         system_instruction="""
                         당신은 수학 분석가입니다. 
-                        [원칙]
-                        1. 절댓값은 반드시 `\\lvert x \\rvert` 사용.
-                        2. 부교재 유사 문항 반드시 매칭 (없으면 가장 비슷한 개념이라도).
-                        3. 기출에 없는 번호일 때만 "SKIP".
+                        
+                        **[절대 원칙 - 위반 시 오작동]**
+                        1. **모든 수식은 LaTeX로:** $x^2$, $a_n$ 처럼 반드시 달러 기호($)를 사용하세요. 
+                           - 절대 `x²`이나 `a₁` 같은 유니코드 문자를 쓰지 마세요.
+                        2. **절댓값:** 반드시 `\\lvert x \\rvert`를 사용하세요.
+                        3. **부교재 매칭:** 가장 유사한 문항을 반드시 찾으세요. (기출 문항 자체가 없을 때만 SKIP)
                         """,
                         contents=all_files,
                         ttl=datetime.timedelta(minutes=60)
@@ -190,8 +229,6 @@ if exam_file and textbook_files and api_key:
                 
                 except Exception as e:
                     st.error(f"캐시 생성 실패: {e}")
-                    if "400" in str(e):
-                        st.warning("파일이 아직 준비되지 않았거나, 모델이 캐싱을 지원하지 않는 일시적 오류일 수 있습니다. 잠시 후 다시 시도해보세요.")
                     st.stop()
 
             else:
@@ -208,20 +245,26 @@ if exam_file and textbook_files and api_key:
                 title, desc = batches[i]
                 status.info(f"🔄 {title} 분석 중...")
                 
+                # 프롬프트: '상세 변형 분석' 란의 내용을 엄격하게 제한
                 prompt_text = f"""
                 **{desc}**을 분석하세요.
                 
+                **[작성 가이드]**
+                1. '상세 변형 분석' 란에는 **'▶ 변형 포인트'**와 **'▶ 출제 의도'**만 적으세요.
+                2. **[금지]** '풀이 과정', '정답 구하기' 등의 내용은 절대 적지 마세요. 분석 칸이 너무 길어지지 않게 하세요.
+                3. 모든 수식은 `$ ... $` (LaTeX) 형식을 사용하세요.
+                
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용 |
+                | {title} | **[원본]**<br>(LaTeX 수식)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX 수식)<br><br>**[요약]** | **▶ 변형 포인트**<br>• (핵심 차이점만 서술)<br><br>**▶ 출제 의도**<br>(평가 요소 서술) |
                 """
                 
                 success = False
                 for attempt in range(3):
                     try:
                         current_prompt = prompt_text
-                        if attempt == 1: current_prompt += "\n(필터 회피: 문제 원문 요약)"
-                        if attempt == 2: current_prompt += "\n(길이 제한 회피: 내용 단축)"
+                        if attempt == 1: current_prompt += "\n(주의: 문제 원문은 핵심 수치만 요약하세요.)"
+                        if attempt == 2: current_prompt += "\n(주의: 내용을 아주 간결하게 줄이세요.)"
                         
                         resp = model.generate_content(current_prompt)
                         
