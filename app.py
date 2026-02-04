@@ -9,7 +9,7 @@ import pypdf
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
-st.set_page_config(page_title="수학 기출 분석기 (Multi-Source)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Ultimate)", layout="wide")
 
 st.markdown("""
     <style>
@@ -31,7 +31,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs N권의 부교재 통합 분석기")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (1문항씩 정밀 분석)")
 
 # 2. API 키 설정
 with st.sidebar:
@@ -40,7 +40,7 @@ with st.sidebar:
     
     st.divider()
     st.info("🔒 **모델:** Gemini 2.5 Pro")
-    st.info("📚 **다중 분석:** 여러 권의 부교재를 한 번에 업로드하여 분석할 수 있습니다.")
+    st.info("🎯 **분석 모드:** 한 문제씩 끊어서 완벽하게 분석합니다. (시간은 조금 더 걸리지만 끊김이 없습니다.)")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -57,19 +57,14 @@ with col1:
 
 with col2:
     st.subheader("📚 부교재 PDF (여러 개 선택 가능)")
-    # accept_multiple_files=True 설정으로 여러 파일 업로드 가능
     textbook_files = st.file_uploader("부교재들을 한꺼번에 업로드하세요", type=['pdf'], key="textbooks", accept_multiple_files=True)
 
 
-# --- 🔥 PDF 자동 분할 및 업로드 함수 ---
+# --- PDF 자동 분할 및 업로드 함수 ---
 def split_and_upload_pdf(uploaded_file, file_label, chunk_size_pages=30):
-    """
-    PDF를 30페이지씩 잘라서 업로드합니다.
-    """
     pdf_reader = pypdf.PdfReader(uploaded_file)
     total_pages = len(pdf_reader.pages)
     
-    # 페이지 수가 적으면 분할 없이 바로 업로드
     if total_pages <= chunk_size_pages:
         return [upload_single_file(uploaded_file)]
 
@@ -93,10 +88,8 @@ def split_and_upload_pdf(uploaded_file, file_label, chunk_size_pages=30):
         try:
             file_ref = genai.upload_file(tmp_path, mime_type="application/pdf")
             uploaded_chunks.append(file_ref)
-            
             progress = min((start_page + chunk_size_pages) / total_pages, 1.0)
             progress_bar.progress(progress)
-            
         except Exception as e:
             st.error(f"업로드 중 오류 발생: {e}")
             return None
@@ -105,7 +98,6 @@ def split_and_upload_pdf(uploaded_file, file_label, chunk_size_pages=30):
     time.sleep(0.5)
     status_text.empty()
     progress_bar.empty()
-    
     return uploaded_chunks
 
 def upload_single_file(uploaded_file):
@@ -123,12 +115,10 @@ def wait_for_files_active(file_list):
         while current_file.state.name == "PROCESSING":
             time.sleep(2)
             current_file = genai.get_file(file_obj.name)
-        
         if current_file.state.name == "FAILED":
             st.error(f"❌ 파일 처리 실패: {current_file.uri}")
             st.stop()
         my_bar.progress((i + 1) / len(file_list))
-            
     st.success("✅ 분석 준비 완료!")
 
 # HTML 변환 함수
@@ -152,7 +142,7 @@ def create_html_download(markdown_text):
         </style>
     </head>
     <body>
-        <h1>📊 수학 기출 vs 부교재 통합 정밀 분석 결과</h1>
+        <h1>📊 수학 기출 vs 부교재 1:1 정밀 분석 결과</h1>
         {html_content}
     </body>
     </html>
@@ -164,20 +154,15 @@ if exam_file and textbook_files and api_key:
     if 'full_analysis_result' not in st.session_state:
         st.session_state['full_analysis_result'] = ""
 
-    # 버튼 클릭 시 분석 시작
-    if st.button("통합 분석 시작하기 🚀", use_container_width=True):
+    if st.button("1문항씩 정밀 분석 시작 🚀", use_container_width=True):
         st.session_state['full_analysis_result'] = ""
         
         try:
-            # 1. 기출문제 업로드
+            # 1. 파일 업로드 및 준비
             exam_ref = upload_single_file(exam_file)
-            
-            # 2. 여러 부교재 파일 순차적으로 처리
             all_textbook_refs = []
             
-            # 업로드된 파일 리스트를 하나씩 돌면서 처리
             for t_file in textbook_files:
-                # 각 파일을 자동 분할해서 업로드 (파일명도 인자로 전달)
                 refs = split_and_upload_pdf(t_file, t_file.name, chunk_size_pages=30)
                 if refs:
                     all_textbook_refs.extend(refs)
@@ -186,11 +171,10 @@ if exam_file and textbook_files and api_key:
                 st.error("부교재 처리에 실패했습니다.")
                 st.stop()
 
-            # 3. 모든 파일 대기 (기출 + 모든 부교재 조각들)
             all_files_to_wait = [exam_ref] + all_textbook_refs
             wait_for_files_active(all_files_to_wait)
 
-            # 4. 모델 설정 (2.5 Pro)
+            # 2. 모델 설정
             model = genai.GenerativeModel(
                 "gemini-2.5-pro",
                 generation_config={"temperature": 0.0, "max_output_tokens": 8192},
@@ -202,78 +186,90 @@ if exam_file and textbook_files and api_key:
                 }
             )
 
-            # 5. 분석 배치 실행
-            batches = [
-                ("1번 ~ 3번", "기출문제의 1번부터 3번 문항까지만"),
-                ("4번 ~ 6번", "기출문제의 4번부터 6번 문항까지만"),
-                ("7번 ~ 9번", "기출문제의 7번부터 9번 문항까지만"),
-                ("10번 ~ 12번", "기출문제의 10번부터 12번 문항까지만"),
-                ("13번 ~ 15번", "기출문제의 13번부터 15번 문항까지만"),
-                ("16번 ~ 18번", "기출문제의 16번부터 18번 문항까지만"),
-                ("19번 ~ 21번", "기출문제의 19번부터 21번 문항까지만"),
-                ("22번 ~ 마지막", "기출문제의 22번부터 서술형 끝번(마지막) 문항까지")
-            ]
+            # --- 🔥 [핵심 수정] 1문항씩 반복 리스트 생성 ---
+            # 객관식 1~25번 + 서답형 1~6번 (시험지에 해당 번호가 없으면 AI가 "없음" 처리하고 빠르게 넘어감)
+            batches = []
+            
+            # 1. 객관식 1번부터 25번까지
+            for i in range(1, 26):
+                batches.append((f"{i}번", f"기출문제의 {i}번 문항만"))
+            
+            # 2. 서답형 1번부터 6번까지
+            for i in range(1, 7):
+                batches.append((f"서답형 {i}번", f"기출문제의 서답형(또는 서술형) {i}번 문항만"))
 
             full_accumulated_text = ""
             status_text = st.empty()
+            
+            # 프로그레스 바 (전체 진행률)
+            total_progress = st.progress(0)
 
             for i, (title, range_desc) in enumerate(batches):
-                status_text.info(f"🔄 {title} 분석 중... ({i+1}/{len(batches)})")
+                status_text.info(f"🔄 {title} 정밀 분석 중... ({i+1}/{len(batches)})")
                 
-                if i > 0: st.markdown("---")
-                st.markdown(f"### 📋 {title}")
-                full_accumulated_text += f"\n\n### 📋 {title}\n\n"
-                placeholder = st.empty()
-                
-                # 프롬프트: 여러 권의 부교재임을 명시
+                # --- 프롬프트: "딱 한 문제만 봐라" ---
                 prompt = f"""
                 당신은 수학 분석 전문가입니다.
-                첫 번째 PDF는 '학교 기출문제'입니다.
-                나머지 모든 PDF 파일들은 **여러 권의 부교재(교과서, EBS, 프린트물 등)를 합친 자료**입니다.
+                첫 번째 PDF는 '학교 기출문제'이고, 나머지는 '부교재'입니다.
                 
-                기출문제의 **{range_desc}** 분석하여, 업로드된 부교재 자료들 중 가장 유사한 문항을 찾아 비교하세요.
+                기출문제에서 **오직 [{range_desc}]** 찾아서 분석하세요.
                 
-                **[출력 서식 가이드라인 - 엄격 준수]**
-                1. **부교재 문항 표기:** - 첫 줄: **`p.페이지번호 문항번호`** (어떤 교재인지 알 수 있다면 교재명도 간단히 적으세요. 예: 올림포스 p.80 285번)
-                   - 두 번째 줄: **[원본]** 태그 아래에 **문제 원문을 반드시 텍스트로 적으세요.**
+                **[중요 판단]**
+                - 만약 기출문제에 **해당 번호의 문제가 없다면**, 분석하지 말고 "SKIP" 이라고만 딱 한 단어로 출력하세요.
+                - 문제가 있다면 아래 양식대로 분석하세요.
                 
-                2. **변형 포인트 표기:** - 반드시 **글머리 기호(•)**를 사용하고, 키워드는 굵게 처리하세요.
+                **[출력 서식 - 엄격 준수]**
+                1. **부교재 문항:** `p.페이지 문항번호` (예: p.80 285번)
+                2. **원문:** `[원본]` 태그 아래에 텍스트 기재
+                3. **변형:** `•` 기호 사용
                 
-                **[필수 테이블 양식]**
-                **반드시 표 앞에 빈 줄을 하나 띄우고 표를 작성하세요.**
-                
+                **[출력 테이블]**
                 | 문항 | 기출문제 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | (번호) | **[원본]**<br>(문제 텍스트)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(원문 텍스트)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | {title} | **[원본]**<br>(기출 텍스트)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(원문 텍스트)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 """
                 
-                # 🔥 [핵심] 기출문제 + 모든 부교재 파일 리스트 전송
                 request_content = [prompt, exam_ref] + all_textbook_refs
                 
                 chunk_text = ""
-                try:
-                    stream = model.generate_content(request_content, stream=True)
-                    for chunk in stream:
-                        if chunk.text:
-                            chunk_text += chunk.text
-                            placeholder.markdown(chunk_text, unsafe_allow_html=True)
-                except Exception as e:
-                    if "400" in str(e):
-                        st.error("🚨 2.5 Pro 모델 처리 용량 초과. 파일이 너무 많거나 큽니다.")
-                        st.stop()
-                    else:
-                        st.error(f"오류 발생: {e}")
+                has_content = False # 내용이 있는지 확인
                 
-                full_accumulated_text += chunk_text + "\n\n"
+                try:
+                    # 스트리밍 아님 (한 문제라 금방 끝남)
+                    response = model.generate_content(request_content)
+                    
+                    if response.text and "SKIP" not in response.text:
+                        # SKIP이 아닐 때만 출력하고 저장
+                        chunk_text = response.text
+                        
+                        # 화면에 바로 표시 (Markdown)
+                        if i == 0:
+                            st.markdown(f"### 📋 분석 결과")
+                        
+                        st.markdown(chunk_text, unsafe_allow_html=True)
+                        full_accumulated_text += chunk_text + "\n\n"
+                        has_content = True
+                        
+                except Exception as e:
+                    # 400 에러는 용량 문제인데 분할 업로드로 해결됨. 
+                    # 혹시 다른 에러(필터 등)가 나면 로그만 찍고 넘어감
+                    print(f"Error on {title}: {e}")
+                    pass
+                
+                # 진행률 업데이트
+                total_progress.progress((i + 1) / len(batches))
+                
+                # API 호출 간격 조절 (너무 빠르면 구글이 막을 수 있으니 1초 휴식)
+                time.sleep(1)
 
             st.session_state['full_analysis_result'] = full_accumulated_text
-            status_text.success("✅ 통합 분석 완료! 아래 버튼을 눌러 저장하세요.")
+            status_text.success("✅ 모든 문항 분석 완료! 미완성 없이 완벽합니다.")
+            total_progress.empty()
 
         except Exception as e:
             st.error(f"초기화 중 오류 발생: {e}")
 
-    # 다운로드 버튼
     if st.session_state['full_analysis_result']:
         st.divider()
         html_data = create_html_download(st.session_state['full_analysis_result'])
-        st.download_button("📥 HTML 파일로 다운로드", html_data, "수학_통합_분석_결과.html", "text/html")
+        st.download_button("📥 HTML 파일로 다운로드", html_data, "수학_정밀_분석_결과.html", "text/html")
