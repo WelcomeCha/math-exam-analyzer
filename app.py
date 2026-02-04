@@ -10,7 +10,7 @@ import pypdf
 import datetime
 
 # 1. 설정 및 스타일링 (표 너비 고정 CSS 포함)
-st.set_page_config(page_title="수학 기출 분석기 (Final Layout)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Final)", layout="wide")
 st.markdown("""
     <style>
     /* 폰트 및 기본 설정 */
@@ -51,7 +51,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (양식 고정 + LaTeX 완벽 적용)")
+st.title("💯 수학 기출 분석기 (반말 모드 + 핵심 요약)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -67,7 +67,8 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델 고정:** gemini-2.5-pro")
-    st.info("🎨 **양식:** 표 너비 고정, LaTeX 필수, 풀이 생략")
+    st.info("💬 **말투:** 반말(평어/음슴체) 통일")
+    st.info("✂️ **내용:** 풀이 제외, 변형 포인트/출제 의도만")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -147,7 +148,6 @@ def wait_for_files_active(files):
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
-    # HTML 파일 다운로드 시에도 표 너비 고정 스타일 적용
     return f"""
     <html><head><meta charset="utf-8">
     <script>
@@ -209,17 +209,17 @@ if exam_file and textbook_files and api_key:
                 status.info("💾 2.5 Pro 컨텍스트 캐시 생성 중...")
                 
                 try:
+                    # 🔥 [시스템 지시사항 업데이트] 반말 모드 & LaTeX 강제
                     cache = caching.CachedContent.create(
                         model='models/gemini-2.5-pro',
-                        display_name='math_exam_fixed_layout',
+                        display_name='math_exam_banmal_mode',
                         system_instruction="""
-                        당신은 수학 분석가입니다. 
+                        당신은 냉철한 수학 분석가다.
                         
-                        **[절대 원칙 - 위반 시 오작동]**
-                        1. **모든 수식은 LaTeX로:** $x^2$, $a_n$ 처럼 반드시 달러 기호($)를 사용하세요. 
-                           - 절대 `x²`이나 `a₁` 같은 유니코드 문자를 쓰지 마세요.
-                        2. **절댓값:** 반드시 `\\lvert x \\rvert`를 사용하세요.
-                        3. **부교재 매칭:** 가장 유사한 문항을 반드시 찾으세요. (기출 문항 자체가 없을 때만 SKIP)
+                        **[작성 원칙 - 엄격 준수]**
+                        1. **말투:** 무조건 **반말(해라체 또는 음슴체)**을 사용해라. (예: "구하는 문제다.", "변형되었다.", "확인함.") 존댓말은 절대 쓰지 마라.
+                        2. **수식:** 모든 수식은 LaTeX(`$x^2$`)로 작성해라. 유니코드는 금지다. 절댓값은 `\\lvert x \\rvert`를 써라.
+                        3. **매칭:** 가장 유사한 부교재 문항을 반드시 찾아라.
                         """,
                         contents=all_files,
                         ttl=datetime.timedelta(minutes=60)
@@ -245,14 +245,14 @@ if exam_file and textbook_files and api_key:
                 title, desc = batches[i]
                 status.info(f"🔄 {title} 분석 중...")
                 
-                # 프롬프트: '상세 변형 분석' 란의 내용을 엄격하게 제한
+                # 🔥 [프롬프트 업데이트] 상세 분석 간소화 & 반말 재강조
                 prompt_text = f"""
-                **{desc}**을 분석하세요.
+                **{desc}**을 분석해라.
                 
-                **[작성 가이드]**
-                1. '상세 변형 분석' 란에는 **'▶ 변형 포인트'**와 **'▶ 출제 의도'**만 적으세요.
-                2. **[금지]** '풀이 과정', '정답 구하기' 등의 내용은 절대 적지 마세요. 분석 칸이 너무 길어지지 않게 하세요.
-                3. 모든 수식은 `$ ... $` (LaTeX) 형식을 사용하세요.
+                **[상세 변형 분석 작성 가이드]**
+                1. **'▶ 변형 포인트'**와 **'▶ 출제 의도'**만 간결하게 적어라.
+                2. **[금지]** 구체적인 풀이 과정이나 정답 도출 과정은 절대 적지 마라. (분석 칸을 낭비하지 마라)
+                3. **말투:** 끝까지 반말을 유지해라. (~함, ~임, ~이다)
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
@@ -263,8 +263,8 @@ if exam_file and textbook_files and api_key:
                 for attempt in range(3):
                     try:
                         current_prompt = prompt_text
-                        if attempt == 1: current_prompt += "\n(주의: 문제 원문은 핵심 수치만 요약하세요.)"
-                        if attempt == 2: current_prompt += "\n(주의: 내용을 아주 간결하게 줄이세요.)"
+                        if attempt == 1: current_prompt += "\n(주의: 문제 원문은 핵심 수치만 요약해라.)"
+                        if attempt == 2: current_prompt += "\n(주의: 내용을 아주 짧게 줄여라.)"
                         
                         resp = model.generate_content(current_prompt)
                         
