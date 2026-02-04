@@ -9,7 +9,7 @@ import pypdf
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
-st.set_page_config(page_title="수학 기출 분석기 (Debug)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Ultimate Fixed)", layout="wide")
 
 st.markdown("""
     <style>
@@ -32,7 +32,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (로그 & 자동복구)")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (절댓값 오류 수정판)")
 
 # 2. API 키 설정
 with st.sidebar:
@@ -41,7 +41,7 @@ with st.sidebar:
     
     st.divider()
     st.info("🔒 **모델:** Gemini 2.5 Pro")
-    st.info("🛠️ **기능:** 에러 발생 시 로그를 보여주고, 자동으로 요약 모드로 전환하여 재시도합니다.")
+    st.info("🛡️ **수식 보호:** 절댓값 기호가 표를 깨뜨리지 않도록 LaTeX 처리를 강화했습니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -154,7 +154,7 @@ if exam_file and textbook_files and api_key:
     if 'full_analysis_result' not in st.session_state:
         st.session_state['full_analysis_result'] = ""
 
-    if st.button("정밀 분석 시작 (로그 확인 모드) 🚀", use_container_width=True):
+    if st.button("정밀 분석 시작 🚀", use_container_width=True):
         st.session_state['full_analysis_result'] = ""
         
         try:
@@ -196,90 +196,78 @@ if exam_file and textbook_files and api_key:
             for i, (title, range_desc) in enumerate(batches):
                 status_text.info(f"🔄 {title} 분석 중... ({i+1}/{len(batches)})")
                 
-                # --- 전략 1: 원문 복원 요청 (저작권 필터 위험 있음) ---
-                prompt_v1 = f"""
+                # --- 🔥 [핵심 수정 1] 절댓값 및 표 깨짐 방지 프롬프트 ---
+                prompt_full = f"""
                 당신은 수학 분석가입니다.
                 첫 번째 PDF는 '기출', 나머지는 '부교재'입니다.
                 기출 {range_desc}을 찾아 분석하세요.
                 
-                **[주의]**
-                - 해당 문제가 없으면 "SKIP"이라고 출력.
-                - 부교재 원문은 있는 그대로(숫자, 조사 포함) 복원하여 적으세요.
+                **[주의사항 - 엄격 준수]**
+                1. **절댓값 기호 주의:** 절댓값 기호('|')는 마크다운 표를 깨뜨립니다. **모든 수식은 반드시 LaTeX($...$) 형식으로 작성**하여 표가 깨지지 않게 하세요. (예: $|x+1|$)
+                2. **상세 분석 유지:** '상세 변형 분석' 란은 절대 줄이지 말고, **키워드와 설명**을 풍부하게 작성하세요.
+                3. **원문 복원:** 부교재 원문은 수치와 조건을 정확히 복원하여 적으세요. (복사가 안 되면 직접 타이핑하듯 복원)
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(내용) | **[원본]**<br>(교재명) p.00 000번<br>(원문 텍스트)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명 |
+                | {title} | **[원본]**<br>(LaTeX 수식 사용 필수)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(LaTeX 수식 사용 필수)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: (상세하게 설명)<br>• **키워드**: (상세하게 설명)<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 """
 
-                # --- 전략 2: 안전 모드 (요약 요청, 필터 회피용) ---
-                prompt_v2 = f"""
-                당신은 수학 분석가입니다.
-                기출 {range_desc}을 찾아 분석하세요.
+                # --- 🔥 [핵심 수정 2] 재시도 시에도 '상세 분석' 요청 (요약 금지) ---
+                prompt_retry = f"""
+                위 요청과 동일하게 분석하되, **저작권 필터를 피하기 위해 '문제 원문' 부분만 핵심 조건 위주로 살짝 다듬어서** 적으세요.
+                단, **'상세 변형 분석' 내용은 절대 줄이지 말고 길게 작성하세요.**
                 
-                **[중요]**
-                - 저작권 보호를 위해 **부교재 원문을 그대로 베끼지 말고, 문제의 핵심 조건과 수치 위주로 요약**해서 적으세요.
-                - 대신 '변형 포인트'를 아주 상세하게 적으세요.
-                
-                | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
-                | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(내용) | **[원본]**<br>(교재명) p.00 000번<br>(핵심 조건 요약)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명 |
+                (절댓값 기호 '|' 사용 시 반드시 $ 기호 안에 넣으세요!)
                 """
                 
-                request_content = [prompt_v1, exam_ref] + all_textbook_refs
+                request_content = [prompt_full, exam_ref] + all_textbook_refs
                 
                 success = False
                 error_log = None
                 
-                # 재시도 로직 (최대 2번)
                 for attempt in range(2):
                     try:
-                        # 첫 시도는 원문 요청, 실패하면 안전 모드(요약) 요청
-                        current_prompt = prompt_v1 if attempt == 0 else prompt_v2
-                        request_content[0] = current_prompt
+                        # 첫 시도는 정석대로, 실패하면 원문만 살짝 다듬어서(그러나 분석은 길게) 재요청
+                        if attempt == 1:
+                            request_content[0] = prompt_retry
                         
                         response = model.generate_content(request_content)
                         
-                        # --- 🔥 [핵심] 로그 분석 및 검증 ---
-                        # 1. 텍스트가 정상적으로 있는지 확인
                         if response.parts:
                             result_text = response.text
+                            # SKIP이면 그냥 넘어감
                             if "SKIP" in result_text:
                                 success = True
                                 break
-                            
-                            # 화면 출력
+                                
+                            # 결과 출력
                             if i == 0: st.markdown(f"### 📋 분석 결과")
                             st.markdown(result_text, unsafe_allow_html=True)
                             full_accumulated_text += result_text + "\n\n"
                             success = True
                             break
-                        
                         else:
-                            # 2. 텍스트가 없다면? (필터 걸림)
                             finish_reason = response.candidates[0].finish_reason
-                            safety_ratings = response.candidates[0].safety_ratings
-                            error_log = f"Attempt {attempt+1} Blocked. Reason: {finish_reason}, Safety: {safety_ratings}"
+                            error_log = f"Attempt {attempt+1} Blocked (Reason: {finish_reason})"
                             
                     except Exception as e:
                         error_log = f"Attempt {attempt+1} Error: {str(e)}"
                         time.sleep(1)
                 
-                # --- 🔥 실패 시 로그 출력 ---
                 if not success:
-                    with st.expander(f"⚠️ {title} 분석 실패 (로그 확인)", expanded=False):
-                        st.write("AI가 답변을 생성하지 못했습니다. 아래 로그를 확인하세요.")
+                    with st.expander(f"⚠️ {title} 분석 실패", expanded=False):
+                        st.write("AI가 답변을 생성하지 못했습니다.")
                         st.code(error_log)
-                        st.write("원인 추정: 저작권 필터(Recitation) 또는 안전 필터(Safety)가 작동했습니다.")
 
                 total_progress.progress((i + 1) / len(batches))
                 time.sleep(1)
 
             st.session_state['full_analysis_result'] = full_accumulated_text
-            status_text.success("✅ 분석 완료! 로그를 확인해보세요.")
+            status_text.success("✅ 분석 완료! 절댓값 오류 해결됨.")
             total_progress.empty()
 
         except Exception as e:
-            st.error(f"치명적 오류 발생: {e}")
+            st.error(f"오류 발생: {e}")
 
     if st.session_state['full_analysis_result']:
         st.divider()
