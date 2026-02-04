@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Auto Sort)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Final Sequential)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { 
@@ -50,13 +50,14 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (번호 자동 정렬)")
+st.title("💯 수학 기출 분석기 (순차 강제 모드)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
     st.session_state['analysis_history'] = []
-if 'question_list' not in st.session_state:
-    st.session_state['question_list'] = [] 
+# 강제 리스트를 저장할 세션
+if 'target_list' not in st.session_state:
+    st.session_state['target_list'] = [] 
 if 'last_index' not in st.session_state:
     st.session_state['last_index'] = 0
 if 'cache_name' not in st.session_state:
@@ -68,7 +69,7 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델:** gemini-2.5-pro")
-    st.info("🔢 **정렬:** 문항 번호를 인식하여 자동으로 오름차순(1->2->서답1) 정렬합니다.")
+    st.info("🔢 **순서 강제:** 1번부터 25번, 서답형 1번부터 6번까지 순서대로 강제 탐색합니다. (누락/뒤섞임 방지)")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -127,44 +128,6 @@ def wait_for_files_active(files):
             st.stop()
     status.empty()
 
-# 🔥 [핵심 기능] 문항 리스트 강제 정렬 함수
-def sort_question_list(q_list):
-    def sort_key(x):
-        # 1. 숫자만 있는 경우 (객관식) -> 우선순위 0
-        if str(x).isdigit():
-            return (0, int(x))
-        
-        # 2. 텍스트가 섞인 경우 (서답형 등) -> 우선순위 1
-        # 정규식으로 숫자만 추출해서 서브 정렬
-        num_match = re.search(r'\d+', str(x))
-        num = int(num_match.group()) if num_match else 999
-        return (1, num)
-    
-    return sorted(q_list, key=sort_key)
-
-def scan_exam_structure(model):
-    """시험지 문항 번호 자동 파악"""
-    prompt = """
-    이 시험지 PDF 전체를 훑어보고 **모든 문제 번호**를 빠짐없이 리스트로 뽑아라.
-    
-    **[규칙]**
-    1. 객관식은 숫자만 (예: "1", "2", ... "18")
-    2. 서술형은 표기 그대로 (예: "[서답형 1]", "주관식 1")
-    **[출력]** Python List JSON 형식만 (예: ["1", "2", "[서답형 1]"])
-    """
-    try:
-        response = model.generate_content(prompt)
-        text = response.text
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if json_match:
-            raw_list = json.loads(json_match.group())
-            # 🔥 여기서 강제 정렬 실행
-            return sort_question_list(raw_list)
-        else:
-            return []
-    except:
-        return []
-
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
@@ -186,21 +149,27 @@ def create_html(text_list):
 # 5. 메인 로직
 if exam_file and textbook_files and api_key:
     c1, c2 = st.columns(2)
-    start_btn = c1.button("🚀 구조 파악 & 분석 시작")
+    start_btn = c1.button("🚀 분석 시작 (순차 강제)")
     resume_btn = False
     
-    if st.session_state['question_list'] and st.session_state['last_index'] < len(st.session_state['question_list']):
+    # 이어하기 버튼 활성화 조건
+    if st.session_state['target_list'] and st.session_state['last_index'] < len(st.session_state['target_list']):
         resume_btn = c2.button("⏯️ 이어하기")
 
     if start_btn or resume_btn:
         try:
             status = st.empty()
             
-            # 1. 캐시 생성
+            # 1. 캐시 생성 및 리스트 초기화
             if not st.session_state.get('cache_name') or start_btn:
                 st.session_state['analysis_history'] = []
-                st.session_state['question_list'] = []
                 st.session_state['last_index'] = 0
+                
+                # 🔥 [핵심] 분석할 리스트를 코드로 강제 생성 (AI에게 맡기지 않음)
+                # 객관식 1~25, 서답형 1~6 (충분히 넉넉하게 잡음)
+                forced_list = [f"{i}" for i in range(1, 26)] + \
+                              [f"[서답형 {i}]" for i in range(1, 7)]
+                st.session_state['target_list'] = forced_list
                 
                 all_files = []
                 exam_chunks = split_and_upload_pdf(exam_file)
@@ -215,7 +184,7 @@ if exam_file and textbook_files and api_key:
                 status.info("💾 캐시 생성 중...")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='sorted_scan_analysis',
+                    display_name='sequential_analysis_v4',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -224,33 +193,27 @@ if exam_file and textbook_files and api_key:
             
             model = genai.GenerativeModel.from_cached_content(cached_content=caching.CachedContent.get(st.session_state['cache_name']))
             
-            # 2. 구조 파악 및 정렬
-            if not st.session_state['question_list']:
-                status.info("🔍 시험지 스캔 및 번호 정렬 중...")
-                detected_questions = scan_exam_structure(model)
-                if not detected_questions:
-                    st.error("문항 인식 실패")
-                    st.stop()
-                st.session_state['question_list'] = detected_questions
-                
-                # 정렬된 리스트 보여주기
-                st.success(f"✅ 정렬된 문항 리스트: {', '.join(detected_questions)}")
-                time.sleep(2)
-
-            q_list = st.session_state['question_list']
+            q_list = st.session_state['target_list']
             start_idx = st.session_state['last_index']
             p_bar = st.progress(start_idx / len(q_list))
             
+            # 2. 순차 분석 루프
             for i in range(start_idx, len(q_list)):
                 q_label = q_list[i]
+                
+                # 화면 표시용 라벨 (숫자면 '번' 붙이기)
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
-                status.info(f"🔄 분석 중... {display_label} (캐시 활용 중)")
+                status.info(f"🔄 확인 중... {display_label}")
                 
                 prompt = f"""
-                기출문제 PDF에서 정확히 **'{q_label}'** 문항을 찾아 분석해라.
+                기출문제 PDF에서 **'{display_label}'** 문제(또는 **'{q_label}'** 표기)가 있는지 찾아라.
                 
-                **[작성 가이드 - 엄격 준수]**
+                **[주의]**
+                - 서답형의 경우 '[서답형 1]', '서술형 1번', '단답형 1' 등 다양한 표기를 모두 확인해라.
+                - **해당 번호의 문제가 PDF에 아예 없다면, 고민하지 말고 즉시 "SKIP" 이라고만 출력해라.**
+                
+                **[있으면 분석 작성]**
                 1. **출처 표기:** [원본] 첫 줄은 반드시 **`[교재명] p.00 00번`** 양식.
                 2. **말투:** 무조건 반말(해라체).
                 3. **수식:** `$ ... $` (LaTeX) 필수.
@@ -262,15 +225,20 @@ if exam_file and textbook_files and api_key:
                 """
                 
                 success = False
-                for attempt in range(3):
+                for attempt in range(2): # 재시도 횟수 줄임 (SKIP 판단 빠르게)
                     try:
                         resp = model.generate_content(prompt)
                         if resp.parts:
                             txt = resp.text
+                            # SKIP이면 조용히 넘어가기
+                            if "SKIP" in txt:
+                                success = True # 의도된 SKIP이므로 성공 처리
+                                break
+                            
+                            # SKIP이 아니면 결과 저장
                             usage = resp.usage_metadata
                             total = usage.prompt_token_count
-                            
-                            token_info = f"<div class='token-info'>📊 토큰: 전체 {total:,} (캐시됨) + 신규 약 300</div>"
+                            token_info = f"<div class='token-info'>📊 {display_label}: 문맥 {total:,} (캐시됨) + 신규 ~300</div>"
                             st.markdown(token_info, unsafe_allow_html=True)
                             
                             st.session_state['analysis_history'].append(txt)
@@ -280,13 +248,11 @@ if exam_file and textbook_files and api_key:
                     except:
                         time.sleep(1)
                 
-                if not success:
-                    st.warning(f"⚠️ {display_label} 실패 (건너뜀)")
-                
+                # 실패했거나 SKIP인 경우 그냥 다음으로 (사용자에게 경고 X, 깔끔하게)
                 st.session_state['last_index'] = i + 1
                 p_bar.progress((i + 1) / len(q_list))
             
-            status.success("🎉 정렬 분석 완료!")
+            status.success("🎉 순차 분석 완료!")
             
         except Exception as e:
             st.error(f"오류: {e}")
