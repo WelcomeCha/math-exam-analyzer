@@ -31,7 +31,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (1문항씩 정밀 분석)")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기")
 
 # 2. API 키 설정
 with st.sidebar:
@@ -273,3 +273,4 @@ if exam_file and textbook_files and api_key:
         st.divider()
         html_data = create_html_download(st.session_state['full_analysis_result'])
         st.download_button("📥 HTML 파일로 다운로드", html_data, "수학_정밀_분석_결과.html", "text/html")
+
