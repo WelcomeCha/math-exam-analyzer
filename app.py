@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Final Form)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Auto Sort)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { 
@@ -50,7 +50,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (출처 양식 통일판)")
+st.title("💯 수학 기출 분석기 (번호 자동 정렬)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -68,7 +68,7 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델:** gemini-2.5-pro")
-    st.info("📝 **양식:** [교재명] p.00 00번")
+    st.info("🔢 **정렬:** 문항 번호를 인식하여 자동으로 오름차순(1->2->서답1) 정렬합니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -127,10 +127,27 @@ def wait_for_files_active(files):
             st.stop()
     status.empty()
 
+# 🔥 [핵심 기능] 문항 리스트 강제 정렬 함수
+def sort_question_list(q_list):
+    def sort_key(x):
+        # 1. 숫자만 있는 경우 (객관식) -> 우선순위 0
+        if str(x).isdigit():
+            return (0, int(x))
+        
+        # 2. 텍스트가 섞인 경우 (서답형 등) -> 우선순위 1
+        # 정규식으로 숫자만 추출해서 서브 정렬
+        num_match = re.search(r'\d+', str(x))
+        num = int(num_match.group()) if num_match else 999
+        return (1, num)
+    
+    return sorted(q_list, key=sort_key)
+
 def scan_exam_structure(model):
     """시험지 문항 번호 자동 파악"""
     prompt = """
-    이 시험지 PDF 전체를 훑어보고 **모든 문제 번호**를 순서대로 리스트로 뽑아라.
+    이 시험지 PDF 전체를 훑어보고 **모든 문제 번호**를 빠짐없이 리스트로 뽑아라.
+    
+    **[규칙]**
     1. 객관식은 숫자만 (예: "1", "2", ... "18")
     2. 서술형은 표기 그대로 (예: "[서답형 1]", "주관식 1")
     **[출력]** Python List JSON 형식만 (예: ["1", "2", "[서답형 1]"])
@@ -140,7 +157,9 @@ def scan_exam_structure(model):
         text = response.text
         json_match = re.search(r'\[.*\]', text, re.DOTALL)
         if json_match:
-            return json.loads(json_match.group())
+            raw_list = json.loads(json_match.group())
+            # 🔥 여기서 강제 정렬 실행
+            return sort_question_list(raw_list)
         else:
             return []
     except:
@@ -177,6 +196,7 @@ if exam_file and textbook_files and api_key:
         try:
             status = st.empty()
             
+            # 1. 캐시 생성
             if not st.session_state.get('cache_name') or start_btn:
                 st.session_state['analysis_history'] = []
                 st.session_state['question_list'] = []
@@ -195,7 +215,7 @@ if exam_file and textbook_files and api_key:
                 status.info("💾 캐시 생성 중...")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='smart_scan_analysis_v3',
+                    display_name='sorted_scan_analysis',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -204,14 +224,17 @@ if exam_file and textbook_files and api_key:
             
             model = genai.GenerativeModel.from_cached_content(cached_content=caching.CachedContent.get(st.session_state['cache_name']))
             
+            # 2. 구조 파악 및 정렬
             if not st.session_state['question_list']:
-                status.info("🔍 시험지 스캔 중...")
+                status.info("🔍 시험지 스캔 및 번호 정렬 중...")
                 detected_questions = scan_exam_structure(model)
                 if not detected_questions:
                     st.error("문항 인식 실패")
                     st.stop()
                 st.session_state['question_list'] = detected_questions
-                st.success(f"✅ 감지된 문항: {detected_questions}")
+                
+                # 정렬된 리스트 보여주기
+                st.success(f"✅ 정렬된 문항 리스트: {', '.join(detected_questions)}")
                 time.sleep(2)
 
             q_list = st.session_state['question_list']
@@ -222,17 +245,14 @@ if exam_file and textbook_files and api_key:
                 q_label = q_list[i]
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
-                status.info(f"🔄 분석 중... {display_label}")
+                status.info(f"🔄 분석 중... {display_label} (캐시 활용 중)")
                 
-                # 🔥 [핵심 수정] 출처 표기 양식 강화
                 prompt = f"""
                 기출문제 PDF에서 정확히 **'{q_label}'** 문항을 찾아 분석해라.
                 
                 **[작성 가이드 - 엄격 준수]**
-                1. **출처 표기:** '부교재 유사 문항'의 [원본] 첫 줄은 반드시 **`[교재명] p.00 00번`** 양식으로 적어라.
-                   - (O) `[올림포스] p.12 05번`, `[교과서] p.103 12번`
-                   - (X) `p.12 5번`, `올림포스 12쪽`
-                2. **말투:** 무조건 반말(해라체)로 작성해라. (~임, ~함)
+                1. **출처 표기:** [원본] 첫 줄은 반드시 **`[교재명] p.00 00번`** 양식.
+                2. **말투:** 무조건 반말(해라체).
                 3. **수식:** `$ ... $` (LaTeX) 필수.
                 4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약. (풀이 과정 X)
                 
@@ -266,7 +286,7 @@ if exam_file and textbook_files and api_key:
                 st.session_state['last_index'] = i + 1
                 p_bar.progress((i + 1) / len(q_list))
             
-            status.success("🎉 분석 완료!")
+            status.success("🎉 정렬 분석 완료!")
             
         except Exception as e:
             st.error(f"오류: {e}")
