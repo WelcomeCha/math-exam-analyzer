@@ -8,7 +8,7 @@ import markdown
 import pypdf
 
 # 1. 설정
-st.set_page_config(page_title="수학 기출 분석기 (Universal)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (LaTeX Fix)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, 
@@ -29,7 +29,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (모든 서술형 호환)")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (수식 렌더링 복구)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -44,7 +44,7 @@ with st.sidebar:
     
     st.divider()
     st.info("🔒 **모델:** Gemini 2.5 Pro")
-    st.info("✨ **업데이트:** 서답형/서술형/단답형/주관식 등 다양한 표기법을 모두 인식하도록 개선했습니다.")
+    st.info("💲 **LaTeX 강제:** 회색 코드박스 대신 깔끔한 수식으로 출력되도록 수정했습니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -99,9 +99,18 @@ def wait_for_files(files):
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
+    # MathJax 설정: $...$ 및 $$...$$ 인식 강화
     return f"""
     <html><head><meta charset="utf-8">
-    <script>MathJax={{tex:{{inlineMath:[['$','$']],displayMath:[['$$','$$']]}},svg:{{fontCache:'global'}} }};</script>
+    <script>
+    MathJax = {{
+      tex: {{
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']]
+      }},
+      svg: {{ fontCache: 'global' }}
+    }};
+    </script>
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>body{{font-family:'Malgun Gothic';padding:40px;line-height:1.6}} table{{border-collapse:collapse;width:100%;margin-bottom:30px}} th,td{{border:1px solid #ddd;padding:15px}} th{{background:#007bff;color:white;text-align:center}}</style>
     </head><body>{html_body}</body></html>
@@ -112,21 +121,12 @@ if exam_file and textbook_files and api_key:
     batches = []
     # 1~18번 (객관식)
     for i in range(1, 19): 
-        batches.append((f"{i}번", f"기출문제의 객관식 {i}번 문항 (번호 '{i}.' 또는 '{i}'로 시작)"))
+        batches.append((f"{i}번", f"기출 객관식 {i}번"))
     
-    # --- 🔥 [핵심 수정] 서답형 인식 범위 대폭 확대 ---
-    # 서답형, 서술형, 단답형, 주관식 등 모든 표현을 포함하는 지시어 생성
+    # 서답형 인식 범위 (1~6)
     for i in range(1, 7): 
-        desc = f"""
-        기출문제에서 **{i}번째 주관식 문항**을 찾으세요.
-        다음 중 하나의 형태로 표기되어 있을 수 있습니다:
-        1. **'[서답형 {i}]'**, **'서답형 {i}'**
-        2. **'[서술형 {i}]'**, **'서술형 {i}'**
-        3. **'[단답형 {i}]'**, **'단답형 {i}'**
-        4. **'[주관식 {i}]'**, **'주관식 {i}'**
-        5. 또는 객관식 마지막 문제 이후에 나오는 **{i}번째 문제**
-        """
-        batches.append((f"주관식(서술형) {i}번", desc))
+        desc = f"기출 서답형(주관식/단답형/서술형) {i}번째 문항"
+        batches.append((f"주관식 {i}번", desc))
 
     c1, c2 = st.columns(2)
     start_btn = c1.button("🚀 처음부터 시작")
@@ -156,31 +156,36 @@ if exam_file and textbook_files and api_key:
                 title, desc = batches[i]
                 status.info(f"🔄 {title} 분석 중... ({i+1}/{len(batches)})")
                 
-                # --- 전략 1: 표준 (서술형 인식 강화) ---
+                # --- 🔥 [핵심 수정] LaTeX 강제 프롬프트 ---
+                # 백틱(`) 사용 금지 명령 추가
+                prompt_common_rules = """
+                **[출력 형식 절대 준수]**
+                1. **수식 표기:** 모든 수식은 반드시 **`$ 수식 $`** 형태로 작성하세요.
+                   - (오답) `x^2`, `x^2` (회색 박스 금지)
+                   - (정답) $x^2$
+                2. **절댓값:** 표 깨짐 방지를 위해 `|x|` 대신 반드시 **`$\\lvert x \\rvert$`**를 사용하세요.
+                3. **코드 블록 금지:** 답변에 코드 블록(```)이나 인라인 코드(`)를 절대 사용하지 마세요.
+                """
+                
                 prompt_forced = f"""
                 당신은 수학 분석가입니다.
-                기출문제 PDF에서 **{desc}**에 해당하는 문제를 찾아내세요.
+                기출문제 PDF에서 **{desc}**을 찾아 부교재와 비교하세요.
                 
-                **[절대 원칙]**
-                1. 표기법이 '[서답형 1]'과 달라도, 문맥상 **{i}번째 주관식 문제**라면 무조건 분석하세요.
-                2. 기출문제에 해당 번호 자체가 아예 존재하지 않는 경우에만 "SKIP" 하세요.
-                3. 부교재에서 가장 유사한 문항을 반드시 찾아 매칭하세요. (없다고 SKIP 금지)
-                4. 절댓값은 `\\lvert x \\rvert` 사용.
+                {prompt_common_rules}
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(LaTeX 수식)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX 수식)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용 |
+                | {title} | **[원본]**<br>(수식은 $...$ 필수)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(수식은 $...$ 필수)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용 |
                 """
                 
-                # --- 전략 2: 필터/오류 회피 (요약 모드) ---
                 prompt_bypass = f"""
-                위와 동일하게 하되, **문제 원문을 절대 그대로 쓰지 말고 핵심 수치만 요약**해서 적으세요.
-                (저작권 필터 회피 목적. 절댓값은 LaTeX 사용)
+                위와 동일하게 하되, 저작권 보호를 위해 **'문제 원문'을 그대로 적지 말고 핵심 수치와 조건만 요약**하세요.
+                {prompt_common_rules}
                 """
 
-                # --- 전략 3: 초간단 모드 (강제 완료) ---
                 prompt_simple = f"""
                 위와 동일하게 하되, **내용을 아주 짧고 간결하게** 줄여서 적으세요.
+                {prompt_common_rules}
                 """
 
                 req = [prompt_forced, exam_ref] + tb_refs
@@ -195,13 +200,9 @@ if exam_file and textbook_files and api_key:
                         
                         if resp.parts:
                             txt = resp.text
-                            # SKIP 검증: 객관식인데 SKIP하거나 너무 빨리 포기하면 재시도 유도 가능
+                            # SKIP 검증
                             if "SKIP" in txt:
-                                if i < 18: # 객관식인데 없다고 하면 이상함
-                                    pass # 상황에 따라 continue 넣을 수 있음
-                                else:
-                                    # 서술형인데 없다고 하면 진짜 없을 수도 있음 (4번까지만 있는 경우 등)
-                                    pass
+                                if i < 18: pass 
                             
                             st.session_state['analysis_history'].append(txt)
                             st.markdown(txt, unsafe_allow_html=True)
