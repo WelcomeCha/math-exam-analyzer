@@ -10,16 +10,16 @@ import pypdf
 import datetime
 
 # 1. 설정
-st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro Caching)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Split+Caching)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { font-family: 'Malgun Gothic', sans-serif !important; }
     .success-log { color: #2e7d32; font-weight: bold; }
-    .info-log { color: #0277bd; font-weight: bold; }
+    .error-log { color: #d32f2f; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (2.5 Pro 고정 + 캐싱)")
+st.title("💯 수학 기출 분석기 (분할 업로드 + 캐싱)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -34,8 +34,8 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델 고정:** Gemini 2.5 Pro")
-    st.info("💾 **기능:** 2.5 Pro 모델에 캐싱을 적용하여 비용을 절감합니다.")
+    st.info("🔒 **모델:** Gemini 1.5 Pro (최신 002)")
+    st.info("⚡ **안전 업로드:** 대용량 파일은 30쪽씩 분할하여 올린 후 캐싱합니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -48,18 +48,76 @@ with col1:
 with col2:
     textbook_files = st.file_uploader("부교재 PDF (다중)", type=['pdf'], accept_multiple_files=True)
 
-# 함수들
-def upload_to_gemini(file_obj):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(file_obj.getvalue())
-        tmp_path = tmp.name
-    return genai.upload_file(tmp_path, mime_type="application/pdf")
+# --- 함수 정의 ---
 
-def wait_for_files(files):
-    with st.spinner("파일 처리 중..."):
-        for f in files:
-            while genai.get_file(f.name).state.name == "PROCESSING":
-                time.sleep(1)
+# 🔥 [핵심 복구] 파일을 잘라서 업로드하는 함수
+def split_and_upload_pdf(uploaded_file, chunk_size_pages=30):
+    pdf_reader = pypdf.PdfReader(uploaded_file)
+    total_pages = len(pdf_reader.pages)
+    file_label = uploaded_file.name
+    
+    # 페이지 적으면 그냥 통으로 (단, 함수 반환형 통일 위해 리스트로)
+    if total_pages <= chunk_size_pages:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
+        return [genai.upload_file(tmp_path, mime_type="application/pdf")]
+
+    status_text = st.empty()
+    status_text.info(f"🔪 '{file_label}' 분할 업로드 중... (총 {total_pages}쪽)")
+    
+    uploaded_chunks = []
+    bar = st.progress(0)
+    
+    for start_page in range(0, total_pages, chunk_size_pages):
+        end_page = min(start_page + chunk_size_pages, total_pages)
+        
+        pdf_writer = pypdf.PdfWriter()
+        for page_num in range(start_page, end_page):
+            pdf_writer.add_page(pdf_reader.pages[page_num])
+            
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_part_{start_page}.pdf") as tmp:
+            pdf_writer.write(tmp)
+            tmp_path = tmp.name
+            
+        try:
+            # 부분 파일 업로드
+            file_ref = genai.upload_file(tmp_path, mime_type="application/pdf")
+            uploaded_chunks.append(file_ref)
+            
+            # 진행률 표시
+            bar.progress(min((start_page + chunk_size_pages) / total_pages, 1.0))
+            
+        except Exception as e:
+            st.error(f"분할 업로드 중 오류: {e}")
+            return None
+            
+    status_text.empty()
+    bar.empty()
+    return uploaded_chunks
+
+def wait_for_files_active(files):
+    """모든 파일 조각이 ACTIVE 될 때까지 대기"""
+    bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, f in enumerate(files):
+        file_obj = genai.get_file(f.name)
+        while file_obj.state.name == "PROCESSING":
+            status_text.info(f"⏳ 서버 처리 중... ({i+1}/{len(files)})")
+            time.sleep(1) # 대기 시간 단축
+            file_obj = genai.get_file(f.name)
+        
+        if file_obj.state.name != "ACTIVE":
+            st.error(f"❌ 파일 처리 실패: {file_obj.uri}")
+            st.stop()
+        
+        bar.progress((i + 1) / len(files))
+        
+    status_text.success("✅ 모든 파일 준비 완료 (ACTIVE)")
+    time.sleep(0.5)
+    status_text.empty()
+    bar.empty()
 
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
@@ -89,50 +147,70 @@ if exam_file and textbook_files and api_key:
         if start_btn: st.session_state['analysis_history'] = []
 
         try:
-            # 1. 파일 업로드
             status = st.empty()
             
-            # 캐시가 없거나 처음 시작이면 새로 생성
+            # --- 캐시 생성 로직 ---
             if not st.session_state.get('cache_name') or start_btn:
-                status.info("📂 파일 서버 업로드 중...")
-                uploaded_exam = upload_to_gemini(exam_file)
-                uploaded_textbooks = [upload_to_gemini(f) for f in textbook_files]
-                all_files = [uploaded_exam] + uploaded_textbooks
                 
-                wait_for_files(all_files)
+                # 1. 파일 분할 업로드 (기출 + 부교재들)
+                all_files = []
                 
-                status.info("💾 2.5 Pro 컨텍스트 캐시 생성 중...")
+                # 기출문제 업로드
+                exam_chunks = split_and_upload_pdf(exam_file)
+                if exam_chunks: all_files.extend(exam_chunks)
                 
-                # --- 🔥 [수정 완료] 모델명을 2.5 Pro로 확실하게 고정 ---
-                cache = caching.CachedContent.create(
-                    model='models/gemini-2.5-pro', # 1.5 Pro 삭제 -> 2.5 Pro 적용
-                    display_name='math_exam_analysis_v2',
-                    system_instruction="""
-                    당신은 수학 분석가입니다. 
-                    [원칙]
-                    1. 절댓값은 반드시 `\\lvert x \\rvert` 사용.
-                    2. 부교재 유사 문항 반드시 매칭.
-                    3. 없는 경우에만 "SKIP".
-                    """,
-                    contents=all_files,
-                    ttl=datetime.timedelta(minutes=60)
-                )
-                st.session_state['cache_name'] = cache.name
-                status.markdown(f"<p class='success-log'>✅ 캐시 생성 완료! (ID: {cache.name})</p>", unsafe_allow_html=True)
+                # 부교재 업로드 (여러 권일 수 있음)
+                for tf in textbook_files:
+                    tb_chunks = split_and_upload_pdf(tf)
+                    if tb_chunks: all_files.extend(tb_chunks)
+                
+                if not all_files:
+                    st.error("파일 업로드 실패")
+                    st.stop()
+
+                # 2. 파일 상태 확인 (ACTIVE 대기)
+                wait_for_files_active(all_files)
+                
+                status.info("💾 컨텍스트 캐시 생성 중...")
+                
+                try:
+                    # 🔥 [수정] 1.5 Pro 최신 모델 사용 (캐싱 지원)
+                    cache = caching.CachedContent.create(
+                        model='models/gemini-1.5-pro-002',
+                        display_name='math_exam_split_cache',
+                        system_instruction="""
+                        당신은 수학 분석가입니다. 
+                        [원칙]
+                        1. 절댓값은 반드시 `\\lvert x \\rvert` 사용.
+                        2. 부교재 유사 문항 반드시 매칭 (없으면 가장 비슷한 개념이라도).
+                        3. 기출에 없는 번호일 때만 "SKIP".
+                        """,
+                        contents=all_files, # 여기에 쪼개진 파일 조각들이 리스트로 들어감
+                        ttl=datetime.timedelta(minutes=60)
+                    )
+                    st.session_state['cache_name'] = cache.name
+                    status.markdown(f"<p class='success-log'>✅ 캐시 생성 완료! (ID: {cache.name})</p>", unsafe_allow_html=True)
+                
+                except Exception as e:
+                    st.error(f"캐시 생성 실패: {e}")
+                    # 400 에러 시 팁 제공
+                    if "400" in str(e):
+                        st.warning("모델명 혹은 파일 상태 문제일 수 있습니다. 1.5-pro-002 모델을 사용 중인지 확인하세요.")
+                    st.stop()
+
             else:
-                # 이미 캐시가 있으면 재사용 (이름으로 가져옴)
                 cache = caching.CachedContent.get(st.session_state['cache_name'])
                 status.info(f"♻️ 기존 캐시 재사용 중: {cache.name}")
 
-            # 2. 모델 연결 (2.5 Pro 캐시 사용)
+            # 모델 연결
             model = genai.GenerativeModel.from_cached_content(cached_content=cache)
             
-            # 3. 분석 루프
+            # 분석 루프
             p_bar = st.progress(start_idx / len(batches))
             
             for i in range(start_idx, len(batches)):
                 title, desc = batches[i]
-                status.info(f"🔄 {title} 분석 중... (2.5 Pro)")
+                status.info(f"🔄 {title} 분석 중...")
                 
                 prompt_text = f"""
                 **{desc}**을 분석하세요.
@@ -146,13 +224,16 @@ if exam_file and textbook_files and api_key:
                 for attempt in range(3):
                     try:
                         current_prompt = prompt_text
-                        if attempt == 1: current_prompt += "\n(저작권 필터 회피: 문제 원문은 핵심 수치만 요약하세요.)"
-                        if attempt == 2: current_prompt += "\n(길이 제한 회피: 내용을 아주 간결하게 줄이세요.)"
+                        if attempt == 1: current_prompt += "\n(필터 회피: 문제 원문 요약)"
+                        if attempt == 2: current_prompt += "\n(길이 제한 회피: 내용 단축)"
                         
                         resp = model.generate_content(current_prompt)
                         
                         if resp.parts:
                             txt = resp.text
+                            # SKIP 검증 (너무 빨리 SKIP하면 의심)
+                            if "SKIP" in txt and i < 18: pass 
+                            
                             st.session_state['analysis_history'].append(txt)
                             st.markdown(txt, unsafe_allow_html=True)
                             success = True
@@ -166,7 +247,7 @@ if exam_file and textbook_files and api_key:
             status.success("✅ 분석 완료!")
             
         except Exception as e:
-            st.error(f"오류: {e}")
+            st.error(f"오류 상세: {e}")
 
     if st.session_state['analysis_history']:
         st.divider()
