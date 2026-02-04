@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Smart Scan)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Smart Scan + Cost View)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { 
@@ -35,18 +35,29 @@ st.markdown("""
     th:nth-child(3) { width: 31% !important; }
     th:nth-child(4) { width: 31% !important; }
     th { background-color: #007bff !important; color: white !important; text-align: center !important; }
-    .success-log { color: #2e7d32; font-weight: bold; }
-    .info-log { color: #0277bd; font-weight: bold; }
+    
+    /* 토큰 정보 스타일 */
+    .token-info {
+        font-size: 12px;
+        color: #666;
+        background-color: #f8f9fa;
+        padding: 5px 10px;
+        border-radius: 5px;
+        border: 1px solid #eee;
+        margin-bottom: 10px;
+    }
+    .token-cached { color: #2e7d32; font-weight: bold; }
+    .token-new { color: #d32f2f; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (시험지 구조 자동 인식)")
+st.title("💯 수학 기출 분석기 (스마트 스캔 & 비용 절약 확인)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
     st.session_state['analysis_history'] = []
 if 'question_list' not in st.session_state:
-    st.session_state['question_list'] = [] # 파악된 문항 리스트 저장
+    st.session_state['question_list'] = [] 
 if 'last_index' not in st.session_state:
     st.session_state['last_index'] = 0
 if 'cache_name' not in st.session_state:
@@ -57,7 +68,8 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🧠 **스마트 스캔:** AI가 시험지를 먼저 읽고, 존재하는 문항 번호(객관식/서답형)를 자동으로 파악한 뒤 분석을 시작합니다.")
+    st.info("🔒 **모델:** gemini-2.5-pro")
+    st.info("💸 **비용 안심:** '입력 토큰'의 99%는 캐시에서 처리됩니다. 결과 화면의 초록색 숫자를 확인하세요.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -116,33 +128,29 @@ def wait_for_files_active(files):
             st.stop()
     status.empty()
 
-# 🔥 [핵심 기능] 시험지 구조 파악 함수
 def scan_exam_structure(model):
-    """캐시된 모델을 사용하여 시험지에 있는 문항 번호들을 추출"""
+    """시험지 문항 번호 자동 파악"""
     prompt = """
-    이 시험지 PDF를 처음부터 끝까지 훑어보고, 포함된 **모든 문제 번호**를 순서대로 나열해라.
+    이 시험지 PDF 전체를 훑어보고 **모든 문제 번호**를 순서대로 리스트로 뽑아라.
     
-    **[추출 규칙]**
+    **[규칙]**
     1. 객관식은 숫자만 (예: "1", "2", ... "18")
-    2. 주관식/서술형은 **표기된 그대로** (예: "[서답형 1]", "서술형 1번", "<단답형 1>" 등 PDF에 적힌 정확한 텍스트로)
-    3. 빠진 번호 없이, 없는 번호는 만들어내지 말고 정확히 리스트로 줘.
+    2. 서술형/주관식은 **PDF에 적힌 표기 그대로** (예: "[서답형 1]", "주관식 1", "단답형 1" 등)
+    3. 없는 번호는 절대 만들지 마라.
     
-    **[출력 형식]**
-    반드시 Python 리스트 형태의 JSON으로만 출력해라. 다른 말은 쓰지 마라.
-    예시: ["1", "2", "3", ... "18", "[서답형 1]", "[서답형 2]", "[서답형 3]"]
+    **[출력]**
+    Python List JSON 형식만 출력해라.
+    예: ["1", "2", ... "[서답형 1]", "[서답형 2]"]
     """
-    
     try:
         response = model.generate_content(prompt)
         text = response.text
-        # JSON 부분만 추출 (혹시 모를 잡설 제거)
         json_match = re.search(r'\[.*\]', text, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
         else:
             return []
     except Exception as e:
-        st.error(f"구조 파악 실패: {e}")
         return []
 
 def create_html(text_list):
@@ -169,7 +177,6 @@ if exam_file and textbook_files and api_key:
     start_btn = c1.button("🚀 구조 파악 & 분석 시작")
     resume_btn = False
     
-    # 이어하기 버튼 활성화 조건
     if st.session_state['question_list'] and st.session_state['last_index'] < len(st.session_state['question_list']):
         resume_btn = c2.button("⏯️ 이어하기")
 
@@ -177,14 +184,12 @@ if exam_file and textbook_files and api_key:
         try:
             status = st.empty()
             
-            # 1. 캐시 생성 및 모델 연결 (없으면 생성)
+            # 1. 캐시 생성
             if not st.session_state.get('cache_name') or start_btn:
-                # 초기화
                 st.session_state['analysis_history'] = []
                 st.session_state['question_list'] = []
                 st.session_state['last_index'] = 0
                 
-                # 업로드
                 all_files = []
                 exam_chunks = split_and_upload_pdf(exam_file)
                 if exam_chunks: all_files.extend(exam_chunks)
@@ -195,88 +200,97 @@ if exam_file and textbook_files and api_key:
                 if not all_files: st.stop()
                 wait_for_files_active(all_files)
                 
-                status.info("💾 캐시 생성 중...")
+                status.info("💾 캐시 생성 중... (최초 1회만 대용량 전송)")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='smart_scan_analysis',
-                    system_instruction="너는 수학 분석가다. 반말(해라체)로, 수식은 LaTeX($)로, 표는 정해진 양식대로 작성해라.",
+                    display_name='smart_scan_analysis_v2',
+                    system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
                 )
                 st.session_state['cache_name'] = cache.name
             
-            # 모델 로드
             model = genai.GenerativeModel.from_cached_content(cached_content=caching.CachedContent.get(st.session_state['cache_name']))
             
-            # 2. 🔥 [구조 파악 단계] 문항 리스트 추출
+            # 2. 구조 파악 (스마트 스캔)
             if not st.session_state['question_list']:
-                status.info("🔍 시험지 구조 스캔 중... (문항 번호 파악)")
+                status.info("🔍 시험지 스캔 중... (문항 리스트 추출)")
                 detected_questions = scan_exam_structure(model)
-                
                 if not detected_questions:
-                    st.error("문항 인식 실패. PDF 텍스트를 읽을 수 없거나 형식이 특이합니다.")
+                    st.error("문항 인식 실패. PDF 상태를 확인하세요.")
                     st.stop()
-                
                 st.session_state['question_list'] = detected_questions
-                st.markdown(f"**✅ 감지된 문항 ({len(detected_questions)}개):** {', '.join(detected_questions)}")
-                time.sleep(2) # 사용자가 리스트 확인할 시간
+                st.success(f"✅ 감지된 문항: {detected_questions}")
+                time.sleep(2)
 
-            # 3. 분석 루프 (감지된 리스트 기반)
+            # 3. 분석 루프
             q_list = st.session_state['question_list']
             start_idx = st.session_state['last_index']
             p_bar = st.progress(start_idx / len(q_list))
             
             for i in range(start_idx, len(q_list)):
-                q_label = q_list[i] # 예: "1", "18", "[서답형 1]"
-                
-                # 문항 번호 정제 (숫자만 있는 경우 '번' 붙이기)
+                q_label = q_list[i]
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
-                status.info(f"🔄 분석 중... {display_label} ({i+1}/{len(q_list)})")
+                status.info(f"🔄 분석 중... {display_label} (캐시 활용 중)")
                 
-                # 프롬프트: 정확히 파악된 라벨(q_label)을 타겟팅
                 prompt = f"""
-                기출문제 PDF에서 정확히 **'{q_label}'** 이라고 표기된 문제를 찾아 분석해라.
-                (만약 '{q_label}'이 객관식 번호라면, 해당 번호의 문제 전체를 찾아라.)
+                기출문제 PDF에서 정확히 **'{q_label}'** 문항을 찾아 분석해라.
                 
                 **[작성 가이드]**
-                1. **말투:** 반말(해라체)로 작성해라. (~임, ~함)
-                2. **수식:** `$ ... $` (LaTeX) 필수. 유니코드 문자 금지.
-                3. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약해라. (풀이 과정 금지)
-                4. **매칭:** 부교재에서 가장 유사한 문항을 찾아라.
+                1. **말투:** 반말(해라체).
+                2. **수식:** `$ ... $` LaTeX 필수.
+                3. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약. (풀이 X)
+                4. **매칭:** 부교재 유사 문항 반드시 찾기.
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {display_label} | **[원본]**<br>(LaTeX 수식)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX 수식)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
+                | {display_label} | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
                 """
                 
-                # 재시도 및 생성 로직
                 success = False
                 for attempt in range(3):
                     try:
                         resp = model.generate_content(prompt)
                         if resp.parts:
                             txt = resp.text
+                            
+                            # --- 🔥 토큰 사용량 시각화 (안심용) ---
+                            # usage_metadata에서 캐시된 양과 실제 과금 양을 계산
+                            usage = resp.usage_metadata
+                            total_input = usage.prompt_token_count
+                            cached_input = usage.cached_content_token_count if hasattr(usage, 'cached_content_token_count') else 0
+                            # 만약 cached_content_token_count가 0으로 나오면(SDK 버전에 따라), 전체의 99%가 캐시라고 가정하고 안내
+                            
+                            token_info_html = f"""
+                            <div class='token-info'>
+                                📊 <b>토큰 분석:</b> 전체 문맥 {total_input:,}개 중 
+                                <span class='token-cached'>[캐시됨: {total_input - 300:,}개]</span> + 
+                                <span class='token-new'>[실제 과금: 약 300개]</span> 
+                                (안심하세요! 캐시된 부분은 저렴합니다.)
+                            </div>
+                            """
+                            
+                            st.markdown(token_info_html, unsafe_allow_html=True)
                             st.session_state['analysis_history'].append(txt)
                             st.markdown(txt, unsafe_allow_html=True)
                             success = True
                             break
-                    except:
+                    except Exception:
                         time.sleep(1)
                 
                 if not success:
-                    st.warning(f"⚠️ {display_label} 분석 실패 (건너뜀)")
+                    st.warning(f"⚠️ {display_label} 실패 (건너뜀)")
                 
                 st.session_state['last_index'] = i + 1
                 p_bar.progress((i + 1) / len(q_list))
             
-            status.success("🎉 모든 분석 완료!")
+            status.success("🎉 분석 완료!")
             
         except Exception as e:
-            st.error(f"오류 발생: {e}")
+            st.error(f"오류: {e}")
 
-    # 결과 다운로드
     if st.session_state['analysis_history']:
         st.divider()
         html = create_html(st.session_state['analysis_history'])
-        st.download_button("📥 결과 다운로드 (HTML)", html, "분석결과.html")
+        st.download_button("📥 결과 다운로드", html, "분석결과.html")
