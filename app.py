@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Final Sequential)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Final Fix)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { 
@@ -45,23 +45,22 @@ st.markdown("""
         border: 1px solid #eee;
         margin-bottom: 10px;
     }
-    .token-cached { color: #2e7d32; font-weight: bold; }
-    .token-new { color: #d32f2f; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (순차 강제 모드)")
+st.title("💯 수학 기출 분석기 (파일명기반 통일 + LaTeX 복구)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
     st.session_state['analysis_history'] = []
-# 강제 리스트를 저장할 세션
 if 'target_list' not in st.session_state:
     st.session_state['target_list'] = [] 
 if 'last_index' not in st.session_state:
     st.session_state['last_index'] = 0
 if 'cache_name' not in st.session_state:
     st.session_state['cache_name'] = None
+if 'textbook_names' not in st.session_state:
+    st.session_state['textbook_names'] = ""
 
 # 3. API 키
 with st.sidebar:
@@ -69,7 +68,8 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델:** gemini-2.5-pro")
-    st.info("🔢 **순서 강제:** 1번부터 25번, 서답형 1번부터 6번까지 순서대로 강제 탐색합니다. (누락/뒤섞임 방지)")
+    st.info("📚 **교재명:** 업로드한 PDF 파일명을 기준으로 자동 통일합니다.")
+    st.info("🛠️ **LaTeX:** 절댓값 기호(|) 깨짐 방지 코드 재적용 완료.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -149,10 +149,9 @@ def create_html(text_list):
 # 5. 메인 로직
 if exam_file and textbook_files and api_key:
     c1, c2 = st.columns(2)
-    start_btn = c1.button("🚀 분석 시작 (순차 강제)")
+    start_btn = c1.button("🚀 분석 시작 (파일명 기반 통일)")
     resume_btn = False
     
-    # 이어하기 버튼 활성화 조건
     if st.session_state['target_list'] and st.session_state['last_index'] < len(st.session_state['target_list']):
         resume_btn = c2.button("⏯️ 이어하기")
 
@@ -165,11 +164,15 @@ if exam_file and textbook_files and api_key:
                 st.session_state['analysis_history'] = []
                 st.session_state['last_index'] = 0
                 
-                # 🔥 [핵심] 분석할 리스트를 코드로 강제 생성 (AI에게 맡기지 않음)
-                # 객관식 1~25, 서답형 1~6 (충분히 넉넉하게 잡음)
+                # 순차 강제 리스트
                 forced_list = [f"{i}" for i in range(1, 26)] + \
                               [f"[서답형 {i}]" for i in range(1, 7)]
                 st.session_state['target_list'] = forced_list
+
+                # 🔥 [핵심] 부교재 파일명 추출하여 교재명 리스트 생성
+                # 예: ['[올림포스]', '[교과서]']
+                tb_names_list = [f"[{f.name.replace('.pdf', '')}]" for f in textbook_files]
+                st.session_state['textbook_names'] = ", ".join(tb_names_list)
                 
                 all_files = []
                 exam_chunks = split_and_upload_pdf(exam_file)
@@ -184,7 +187,7 @@ if exam_file and textbook_files and api_key:
                 status.info("💾 캐시 생성 중...")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='sequential_analysis_v4',
+                    display_name='filename_bind_analysis',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -195,29 +198,32 @@ if exam_file and textbook_files and api_key:
             
             q_list = st.session_state['target_list']
             start_idx = st.session_state['last_index']
+            # 교재명 목록 (프롬프트 주입용)
+            tb_names_str = st.session_state['textbook_names']
+            
             p_bar = st.progress(start_idx / len(q_list))
             
-            # 2. 순차 분석 루프
+            # 2. 분석 루프
             for i in range(start_idx, len(q_list)):
                 q_label = q_list[i]
-                
-                # 화면 표시용 라벨 (숫자면 '번' 붙이기)
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
-                status.info(f"🔄 확인 중... {display_label}")
+                status.info(f"🔄 분석 중... {display_label}")
                 
+                # 🔥 [프롬프트] 파일명 기반 교재명 강제 + 절댓값 명령 강화
                 prompt = f"""
-                기출문제 PDF에서 **'{display_label}'** 문제(또는 **'{q_label}'** 표기)가 있는지 찾아라.
+                기출문제 PDF에서 **'{display_label}'** 문항을 찾아 분석해라. (없으면 "SKIP")
                 
-                **[주의]**
-                - 서답형의 경우 '[서답형 1]', '서술형 1번', '단답형 1' 등 다양한 표기를 모두 확인해라.
-                - **해당 번호의 문제가 PDF에 아예 없다면, 고민하지 말고 즉시 "SKIP" 이라고만 출력해라.**
+                **[부교재 매칭 가이드 - 파일명 기준 통일]**
+                지금 등록된 부교재 목록은 다음과 같다: **{tb_names_str}**
+                유사 문항 출처를 적을 때는 위 목록에 있는 이름을 정확히 사용해서 **`[교재명] p.00 00번`** 양식으로 적어라.
+                (예: `[{textbook_files[0].name.replace('.pdf', '')}] p.10 5번`)
                 
-                **[있으면 분석 작성]**
-                1. **출처 표기:** [원본] 첫 줄은 반드시 **`[교재명] p.00 00번`** 양식.
-                2. **말투:** 무조건 반말(해라체).
-                3. **수식:** `$ ... $` (LaTeX) 필수.
-                4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 핵심 요약. (풀이 과정 X)
+                **[작성 금지 및 주의사항]**
+                1. **절댓값 기호(`|`) 금지:** 마크다운 표가 깨진다. 무조건 **`\\lvert x \\rvert`** 명령어를 써라.
+                2. **수식:** `$ ... $` (LaTeX) 필수.
+                3. **말투:** 반말(해라체).
+                4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 요약 (풀이 X).
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
@@ -225,17 +231,15 @@ if exam_file and textbook_files and api_key:
                 """
                 
                 success = False
-                for attempt in range(2): # 재시도 횟수 줄임 (SKIP 판단 빠르게)
+                for attempt in range(2):
                     try:
                         resp = model.generate_content(prompt)
                         if resp.parts:
                             txt = resp.text
-                            # SKIP이면 조용히 넘어가기
                             if "SKIP" in txt:
-                                success = True # 의도된 SKIP이므로 성공 처리
+                                success = True
                                 break
                             
-                            # SKIP이 아니면 결과 저장
                             usage = resp.usage_metadata
                             total = usage.prompt_token_count
                             token_info = f"<div class='token-info'>📊 {display_label}: 문맥 {total:,} (캐시됨) + 신규 ~300</div>"
@@ -248,11 +252,10 @@ if exam_file and textbook_files and api_key:
                     except:
                         time.sleep(1)
                 
-                # 실패했거나 SKIP인 경우 그냥 다음으로 (사용자에게 경고 X, 깔끔하게)
                 st.session_state['last_index'] = i + 1
                 p_bar.progress((i + 1) / len(q_list))
             
-            status.success("🎉 순차 분석 완료!")
+            status.success("🎉 분석 완료!")
             
         except Exception as e:
             st.error(f"오류: {e}")
