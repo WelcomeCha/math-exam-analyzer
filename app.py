@@ -9,7 +9,7 @@ import pypdf
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
-st.set_page_config(page_title="수학 기출 분석기 (Ultimate)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Debug)", layout="wide")
 
 st.markdown("""
     <style>
@@ -28,10 +28,11 @@ st.markdown("""
         white-space: nowrap;
     }
     td { vertical-align: top !important; }
+    .error-log { color: #d32f2f; font-size: 12px; font-family: monospace; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 분석기")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (로그 & 자동복구)")
 
 # 2. API 키 설정
 with st.sidebar:
@@ -40,7 +41,7 @@ with st.sidebar:
     
     st.divider()
     st.info("🔒 **모델:** Gemini 2.5 Pro")
-    st.info("🛡️ **저작권 필터 우회:** 원문 복사 대신 '정밀 복원' 방식을 사용하여 끊김을 방지합니다.")
+    st.info("🛠️ **기능:** 에러 발생 시 로그를 보여주고, 자동으로 요약 모드로 전환하여 재시도합니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -56,7 +57,7 @@ with col1:
     exam_file = st.file_uploader("기출문제 파일을 업로드하세요", type=['pdf'], key="exam")
 
 with col2:
-    st.subheader("📚 부교재 PDF (여러 개 선택 가능)")
+    st.subheader("📚 부교재 PDF")
     textbook_files = st.file_uploader("부교재들을 한꺼번에 업로드하세요", type=['pdf'], key="textbooks", accept_multiple_files=True)
 
 
@@ -70,7 +71,7 @@ def split_and_upload_pdf(uploaded_file, file_label, chunk_size_pages=30):
 
     status_text = st.empty()
     progress_bar = st.progress(0)
-    status_text.info(f"📖 '{file_label}' 파일이 큽니다({total_pages}쪽). 분할 업로드 중...")
+    status_text.info(f"📖 '{file_label}' 분할 업로드 중... ({total_pages}쪽)")
     
     uploaded_chunks = []
     
@@ -94,7 +95,7 @@ def split_and_upload_pdf(uploaded_file, file_label, chunk_size_pages=30):
             st.error(f"업로드 중 오류 발생: {e}")
             return None
             
-    status_text.success(f"✅ '{file_label}' 업로드 완료!")
+    status_text.success(f"✅ '{file_label}' 준비 완료!")
     time.sleep(0.5)
     status_text.empty()
     progress_bar.empty()
@@ -108,12 +109,12 @@ def upload_single_file(uploaded_file):
     return file_ref
 
 def wait_for_files_active(file_list):
-    st.info("📚 AI가 모든 자료를 학습하고 있습니다... (잠시만 기다려주세요)")
+    st.info("📚 AI가 자료를 읽고 있습니다...")
     my_bar = st.progress(0)
     for i, file_obj in enumerate(file_list):
         current_file = genai.get_file(file_obj.name)
         while current_file.state.name == "PROCESSING":
-            time.sleep(2)
+            time.sleep(1)
             current_file = genai.get_file(file_obj.name)
         if current_file.state.name == "FAILED":
             st.error(f"❌ 파일 처리 실패: {current_file.uri}")
@@ -121,7 +122,6 @@ def wait_for_files_active(file_list):
         my_bar.progress((i + 1) / len(file_list))
     st.success("✅ 분석 준비 완료!")
 
-# HTML 변환 함수
 def create_html_download(markdown_text):
     html_content = markdown.markdown(markdown_text, extensions=['tables'])
     styled_html = f"""
@@ -142,7 +142,7 @@ def create_html_download(markdown_text):
         </style>
     </head>
     <body>
-        <h1>📊 수학 기출 vs 부교재 1:1 정밀 분석 결과</h1>
+        <h1>📊 분석 결과 보고서</h1>
         {html_content}
     </body>
     </html>
@@ -154,18 +154,16 @@ if exam_file and textbook_files and api_key:
     if 'full_analysis_result' not in st.session_state:
         st.session_state['full_analysis_result'] = ""
 
-    if st.button("1문항씩 정밀 분석 시작 🚀", use_container_width=True):
+    if st.button("정밀 분석 시작 (로그 확인 모드) 🚀", use_container_width=True):
         st.session_state['full_analysis_result'] = ""
         
         try:
-            # 1. 파일 업로드 및 준비
+            # 파일 준비
             exam_ref = upload_single_file(exam_file)
             all_textbook_refs = []
-            
             for t_file in textbook_files:
                 refs = split_and_upload_pdf(t_file, t_file.name, chunk_size_pages=30)
-                if refs:
-                    all_textbook_refs.extend(refs)
+                if refs: all_textbook_refs.extend(refs)
             
             if not all_textbook_refs:
                 st.error("부교재 처리에 실패했습니다.")
@@ -174,7 +172,7 @@ if exam_file and textbook_files and api_key:
             all_files_to_wait = [exam_ref] + all_textbook_refs
             wait_for_files_active(all_files_to_wait)
 
-            # 2. 모델 설정 (안전성 최우선)
+            # 모델 설정
             model = genai.GenerativeModel(
                 "gemini-2.5-pro",
                 generation_config={"temperature": 0.0, "max_output_tokens": 8192},
@@ -186,10 +184,10 @@ if exam_file and textbook_files and api_key:
                 }
             )
 
-            # 문항 리스트 생성
+            # 문항 리스트
             batches = []
             for i in range(1, 26): batches.append((f"{i}번", f"기출문제의 {i}번 문항만"))
-            for i in range(1, 7): batches.append((f"서답형 {i}번", f"기출문제의 서답형(또는 서술형) {i}번 문항만"))
+            for i in range(1, 7): batches.append((f"서답형 {i}번", f"기출문제의 서답형 {i}번 문항만"))
 
             full_accumulated_text = ""
             status_text = st.empty()
@@ -198,69 +196,90 @@ if exam_file and textbook_files and api_key:
             for i, (title, range_desc) in enumerate(batches):
                 status_text.info(f"🔄 {title} 분석 중... ({i+1}/{len(batches)})")
                 
-                # --- 🔥 [핵심 1] 저작권 필터 우회 프롬프트 ---
-                prompt = f"""
-                당신은 수학 분석 전문가입니다.
-                첫 번째 PDF는 '학교 기출문제'이고, 나머지는 '부교재'입니다.
+                # --- 전략 1: 원문 복원 요청 (저작권 필터 위험 있음) ---
+                prompt_v1 = f"""
+                당신은 수학 분석가입니다.
+                첫 번째 PDF는 '기출', 나머지는 '부교재'입니다.
+                기출 {range_desc}을 찾아 분석하세요.
                 
-                기출문제에서 **오직 [{range_desc}]** 찾아서 분석하세요.
+                **[주의]**
+                - 해당 문제가 없으면 "SKIP"이라고 출력.
+                - 부교재 원문은 있는 그대로(숫자, 조사 포함) 복원하여 적으세요.
                 
-                **[출력 서식 가이드라인 - 엄격 준수]**
-                1. **부교재 문항 표기:** `p.페이지 문항번호` (예: p.80 285번)
-                2. **원문 복원:** '복사'하지 말고, 문제의 수치, 조건, 질문을 완벽하게 재구성하여 **[원본]** 태그 아래에 적으세요. (그림 묘사는 생략)
-                3. **만약 문제가 없으면:** "SKIP" 이라고만 출력.
-                
-                **[출력 테이블 양식]**
-                | 문항 | 기출문제 요약 | 부교재 유사 문항 | 상세 변형 분석 |
+                | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(기출 텍스트)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(문제 내용 상세 복원)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명<br>• **키워드**: 설명<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | {title} | **[원본]**<br>(내용) | **[원본]**<br>(교재명) p.00 000번<br>(원문 텍스트)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명 |
+                """
+
+                # --- 전략 2: 안전 모드 (요약 요청, 필터 회피용) ---
+                prompt_v2 = f"""
+                당신은 수학 분석가입니다.
+                기출 {range_desc}을 찾아 분석하세요.
+                
+                **[중요]**
+                - 저작권 보호를 위해 **부교재 원문을 그대로 베끼지 말고, 문제의 핵심 조건과 수치 위주로 요약**해서 적으세요.
+                - 대신 '변형 포인트'를 아주 상세하게 적으세요.
+                
+                | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
+                | :--- | :--- | :--- | :--- |
+                | {title} | **[원본]**<br>(내용) | **[원본]**<br>(교재명) p.00 000번<br>(핵심 조건 요약)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: 설명 |
                 """
                 
-                request_content = [prompt, exam_ref] + all_textbook_refs
+                request_content = [prompt_v1, exam_ref] + all_textbook_refs
                 
-                # --- 🔥 [핵심 2] 재시도(Retry) 로직 & 스트리밍 적용 ---
-                max_retries = 2
                 success = False
+                error_log = None
                 
-                for attempt in range(max_retries):
+                # 재시도 로직 (최대 2번)
+                for attempt in range(2):
                     try:
-                        chunk_text = ""
-                        # 스트리밍을 켜야 연결 유지에 유리함
-                        stream = model.generate_content(request_content, stream=True)
+                        # 첫 시도는 원문 요청, 실패하면 안전 모드(요약) 요청
+                        current_prompt = prompt_v1 if attempt == 0 else prompt_v2
+                        request_content[0] = current_prompt
                         
-                        for chunk in stream:
-                            if chunk.text:
-                                chunk_text += chunk.text
+                        response = model.generate_content(request_content)
                         
-                        # 내용이 있고 SKIP이 아니면 성공
-                        if chunk_text and "SKIP" not in chunk_text:
+                        # --- 🔥 [핵심] 로그 분석 및 검증 ---
+                        # 1. 텍스트가 정상적으로 있는지 확인
+                        if response.parts:
+                            result_text = response.text
+                            if "SKIP" in result_text:
+                                success = True
+                                break
+                            
+                            # 화면 출력
                             if i == 0: st.markdown(f"### 📋 분석 결과")
-                            st.markdown(chunk_text, unsafe_allow_html=True)
-                            full_accumulated_text += chunk_text + "\n\n"
+                            st.markdown(result_text, unsafe_allow_html=True)
+                            full_accumulated_text += result_text + "\n\n"
                             success = True
-                            break # 성공하면 재시도 루프 탈출
-                        elif "SKIP" in chunk_text:
-                            success = True # 문제가 없어서 넘어간 것도 성공으로 간주
                             break
+                        
+                        else:
+                            # 2. 텍스트가 없다면? (필터 걸림)
+                            finish_reason = response.candidates[0].finish_reason
+                            safety_ratings = response.candidates[0].safety_ratings
+                            error_log = f"Attempt {attempt+1} Blocked. Reason: {finish_reason}, Safety: {safety_ratings}"
                             
                     except Exception as e:
-                        # 에러 나면 잠시 쉬었다가 재시도
-                        time.sleep(2)
-                        continue
+                        error_log = f"Attempt {attempt+1} Error: {str(e)}"
+                        time.sleep(1)
                 
+                # --- 🔥 실패 시 로그 출력 ---
                 if not success:
-                    # 2번 시도했는데도 실패하면 경고만 띄우고 넘어감 (멈추지 않음)
-                    print(f"Failed to analyze {title} after retries.")
-                
+                    with st.expander(f"⚠️ {title} 분석 실패 (로그 확인)", expanded=False):
+                        st.write("AI가 답변을 생성하지 못했습니다. 아래 로그를 확인하세요.")
+                        st.code(error_log)
+                        st.write("원인 추정: 저작권 필터(Recitation) 또는 안전 필터(Safety)가 작동했습니다.")
+
                 total_progress.progress((i + 1) / len(batches))
-                time.sleep(1) # API 과부하 방지
+                time.sleep(1)
 
             st.session_state['full_analysis_result'] = full_accumulated_text
-            status_text.success("✅ 모든 문항 분석 완료! 저장하세요.")
+            status_text.success("✅ 분석 완료! 로그를 확인해보세요.")
             total_progress.empty()
 
         except Exception as e:
-            st.error(f"초기화 중 오류 발생: {e}")
+            st.error(f"치명적 오류 발생: {e}")
 
     if st.session_state['full_analysis_result']:
         st.divider()
