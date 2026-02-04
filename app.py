@@ -10,7 +10,7 @@ import pypdf
 import datetime
 
 # 1. 설정
-st.set_page_config(page_title="수학 기출 분석기 (Context Caching)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro Caching)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th { font-family: 'Malgun Gothic', sans-serif !important; }
@@ -19,7 +19,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (비용 절약형: 캐싱 적용)")
+st.title("💯 수학 기출 분석기 (2.5 Pro 고정 + 캐싱)")
 
 # 2. 세션
 if 'analysis_history' not in st.session_state:
@@ -34,7 +34,8 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("💾 **컨텍스트 캐싱:** 대용량 PDF를 한 번만 서버에 저장하고 재사용합니다. 입력 비용이 획기적으로 줄어듭니다.")
+    st.info("🔒 **모델 고정:** Gemini 2.5 Pro")
+    st.info("💾 **기능:** 2.5 Pro 모델에 캐싱을 적용하여 비용을 절감합니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -88,52 +89,51 @@ if exam_file and textbook_files and api_key:
         if start_btn: st.session_state['analysis_history'] = []
 
         try:
-            # --- 🔥 [핵심 1] 캐시 생성 (최초 1회만 수행하거나 파일 바뀌면 수행) ---
-            # 스트림릿 특성상 버튼 누를 때마다 실행되지만, 캐싱 API를 호출하여 최적화함
-            
-            # 1. 파일 업로드 (Gemini File API)
+            # 1. 파일 업로드
             status = st.empty()
-            status.info("📂 파일 서버 업로드 중...")
             
-            uploaded_exam = upload_to_gemini(exam_file)
-            uploaded_textbooks = [upload_to_gemini(f) for f in textbook_files]
-            all_files = [uploaded_exam] + uploaded_textbooks
-            
-            wait_for_files(all_files)
-            
-            # 2. 캐시 생성 (Input Once)
-            status.info("💾 컨텍스트 캐시 생성 중 (Input Once)...")
-            
-            # 캐시 만료 시간 설정 (1시간)
-            cache = caching.CachedContent.create(
-                model='models/gemini-1.5-pro-002', # 최신 1.5 Pro 모델 지정
-                display_name='math_exam_analysis',
-                system_instruction="""
-                당신은 수학 분석가입니다. 
-                [원칙]
-                1. 절댓값은 반드시 `\\lvert x \\rvert` 사용.
-                2. 부교재 유사 문항 반드시 매칭.
-                3. 없는 경우에만 "SKIP".
-                """,
-                contents=all_files,
-                ttl=datetime.timedelta(minutes=60)
-            )
-            
-            st.session_state['cache_name'] = cache.name
-            status.markdown(f"<p class='success-log'>✅ 캐시 생성 완료! (ID: {cache.name}) - 이제부터 입력 비용은 거의 0원입니다.</p>", unsafe_allow_html=True)
-            
-            # 3. 모델 연결 (캐시된 내용 사용)
-            # 이제 파일을 매번 보내지 않고 cache 객체만 연결합니다.
+            # 캐시가 없거나 처음 시작이면 새로 생성
+            if not st.session_state.get('cache_name') or start_btn:
+                status.info("📂 파일 서버 업로드 중...")
+                uploaded_exam = upload_to_gemini(exam_file)
+                uploaded_textbooks = [upload_to_gemini(f) for f in textbook_files]
+                all_files = [uploaded_exam] + uploaded_textbooks
+                
+                wait_for_files(all_files)
+                
+                status.info("💾 2.5 Pro 컨텍스트 캐시 생성 중...")
+                
+                # --- 🔥 [수정 완료] 모델명을 2.5 Pro로 확실하게 고정 ---
+                cache = caching.CachedContent.create(
+                    model='models/gemini-2.5-pro', # 1.5 Pro 삭제 -> 2.5 Pro 적용
+                    display_name='math_exam_analysis_v2',
+                    system_instruction="""
+                    당신은 수학 분석가입니다. 
+                    [원칙]
+                    1. 절댓값은 반드시 `\\lvert x \\rvert` 사용.
+                    2. 부교재 유사 문항 반드시 매칭.
+                    3. 없는 경우에만 "SKIP".
+                    """,
+                    contents=all_files,
+                    ttl=datetime.timedelta(minutes=60)
+                )
+                st.session_state['cache_name'] = cache.name
+                status.markdown(f"<p class='success-log'>✅ 캐시 생성 완료! (ID: {cache.name})</p>", unsafe_allow_html=True)
+            else:
+                # 이미 캐시가 있으면 재사용 (이름으로 가져옴)
+                cache = caching.CachedContent.get(st.session_state['cache_name'])
+                status.info(f"♻️ 기존 캐시 재사용 중: {cache.name}")
+
+            # 2. 모델 연결 (2.5 Pro 캐시 사용)
             model = genai.GenerativeModel.from_cached_content(cached_content=cache)
             
-            # 4. 분석 루프 (Output만 끊어서 요청)
+            # 3. 분석 루프
             p_bar = st.progress(start_idx / len(batches))
             
             for i in range(start_idx, len(batches)):
                 title, desc = batches[i]
-                status.info(f"🔄 {title} 분석 중... (캐시 사용)")
+                status.info(f"🔄 {title} 분석 중... (2.5 Pro)")
                 
-                # 프롬프트에는 이제 파일이 필요 없습니다! (이미 캐시에 있음)
                 prompt_text = f"""
                 **{desc}**을 분석하세요.
                 
@@ -142,22 +142,17 @@ if exam_file and textbook_files and api_key:
                 | {title} | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>p.xx<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용 |
                 """
                 
-                # 재시도 로직 (필터/오류 대응)
                 success = False
                 for attempt in range(3):
                     try:
-                        # 요약/단축 모드 프롬프트 변경
                         current_prompt = prompt_text
                         if attempt == 1: current_prompt += "\n(저작권 필터 회피: 문제 원문은 핵심 수치만 요약하세요.)"
                         if attempt == 2: current_prompt += "\n(길이 제한 회피: 내용을 아주 간결하게 줄이세요.)"
                         
-                        # generate_content에 파일을 넣지 않습니다! (캐시가 알아서 함)
                         resp = model.generate_content(current_prompt)
                         
                         if resp.parts:
                             txt = resp.text
-                            if "SKIP" in txt and i < 18: pass # 객관식 SKIP 의심 시 재시도 로직 등 추가 가능
-                            
                             st.session_state['analysis_history'].append(txt)
                             st.markdown(txt, unsafe_allow_html=True)
                             success = True
@@ -169,9 +164,6 @@ if exam_file and textbook_files and api_key:
                 p_bar.progress((i + 1) / len(batches))
             
             status.success("✅ 분석 완료!")
-            
-            # (선택) 분석 끝나면 캐시 삭제해서 저장 공간 확보 (비용 절약)
-            # cache.delete() 
             
         except Exception as e:
             st.error(f"오류: {e}")
