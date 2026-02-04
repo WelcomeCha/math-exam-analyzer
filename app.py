@@ -9,7 +9,7 @@ import pypdf
 from dotenv import load_dotenv
 
 # 1. 설정 및 디자인
-st.set_page_config(page_title="수학 기출 분석기 (Ultimate Fixed)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (Fixed)", layout="wide")
 
 st.markdown("""
     <style>
@@ -32,7 +32,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (절댓값 오류 수정판)")
+st.title("💯 고등학교 수학 기출 vs 부교재 분석기 (절댓값 Fix)")
 
 # 2. API 키 설정
 with st.sidebar:
@@ -41,7 +41,7 @@ with st.sidebar:
     
     st.divider()
     st.info("🔒 **모델:** Gemini 2.5 Pro")
-    st.info("🛡️ **수식 보호:** 절댓값 기호가 표를 깨뜨리지 않도록 LaTeX 처리를 강화했습니다.")
+    st.info("🛡️ **표 깨짐 방지:** 절댓값 기호를 특수 명령어(\\lvert, \\rvert)로 강제 변환합니다.")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -196,28 +196,35 @@ if exam_file and textbook_files and api_key:
             for i, (title, range_desc) in enumerate(batches):
                 status_text.info(f"🔄 {title} 분석 중... ({i+1}/{len(batches)})")
                 
-                # --- 🔥 [핵심 수정 1] 절댓값 및 표 깨짐 방지 프롬프트 ---
+                # --- 🔥 [긴급 수정] 절댓값 표 깨짐 방지 프롬프트 ---
+                # 핵심: | 기호를 쓰지 말고 \lvert, \rvert 명령어를 쓰라고 강제함
                 prompt_full = f"""
                 당신은 수학 분석가입니다.
                 첫 번째 PDF는 '기출', 나머지는 '부교재'입니다.
                 기출 {range_desc}을 찾아 분석하세요.
                 
-                **[주의사항 - 엄격 준수]**
-                1. **절댓값 기호 주의:** 절댓값 기호('|')는 마크다운 표를 깨뜨립니다. **모든 수식은 반드시 LaTeX($...$) 형식으로 작성**하여 표가 깨지지 않게 하세요. (예: $|x+1|$)
-                2. **상세 분석 유지:** '상세 변형 분석' 란은 절대 줄이지 말고, **키워드와 설명**을 풍부하게 작성하세요.
-                3. **원문 복원:** 부교재 원문은 수치와 조건을 정확히 복원하여 적으세요. (복사가 안 되면 직접 타이핑하듯 복원)
+                **[치명적 오류 방지 - 절대 준수]**
+                1. **절댓값 표기 금지:** 키보드의 수직선 기호(`|`)를 사용하면 표가 깨집니다.
+                2. **대체 명령어 사용:** 절댓값은 무조건 LaTeX 명령어 **`\\lvert`** (왼쪽)와 **`\\rvert`** (오른쪽)을 사용하세요.
+                   - (X) $|x+3|$
+                   - (O) $\\lvert x+3 \\rvert$
+                
+                **[출력 서식]**
+                1. **부교재 문항:** `p.페이지 문항번호`
+                2. **원문 복원:** 부교재 원문을 수치와 조건 그대로 복원하여 적으세요. (복사가 안 되면 직접 타이핑하듯 복원)
+                3. **상세 분석:** '변형 포인트'는 절대 줄이지 말고 풍부하게 작성하세요.
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | {title} | **[원본]**<br>(LaTeX 수식 사용 필수)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(LaTeX 수식 사용 필수)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: (상세하게 설명)<br>• **키워드**: (상세하게 설명)<br><br>**▶ 출제 의도**<br>(평가 목표) |
+                | {title} | **[원본]**<br>(LaTeX 수식 필수)<br><br>**[요약]**<br>(요약) | **[원본]**<br>(교재명) p.00 000번<br>(LaTeX 수식 필수)<br><br>**[요약]**<br>(요약) | **▶ 변형 포인트**<br>• **키워드**: (상세 설명)<br>• **키워드**: (상세 설명)<br><br>**▶ 출제 의도**<br>(평가 목표) |
                 """
 
-                # --- 🔥 [핵심 수정 2] 재시도 시에도 '상세 분석' 요청 (요약 금지) ---
+                # 재시도 프롬프트에서도 동일하게 절댓값 강조
                 prompt_retry = f"""
-                위 요청과 동일하게 분석하되, **저작권 필터를 피하기 위해 '문제 원문' 부분만 핵심 조건 위주로 살짝 다듬어서** 적으세요.
-                단, **'상세 변형 분석' 내용은 절대 줄이지 말고 길게 작성하세요.**
+                위 요청과 동일하게 분석하되, 저작권 필터가 걸렸으므로 '문제 원문'을 핵심 조건 위주로 요약해서 적으세요.
                 
-                (절댓값 기호 '|' 사용 시 반드시 $ 기호 안에 넣으세요!)
+                **[중요] 절댓값 기호(`|`) 절대 사용 금지!**
+                반드시 `$\\lvert 식 \\rvert$` 형태의 LaTeX 명령어를 사용하세요. 표가 깨지지 않게 주의하세요.
                 """
                 
                 request_content = [prompt_full, exam_ref] + all_textbook_refs
@@ -227,7 +234,6 @@ if exam_file and textbook_files and api_key:
                 
                 for attempt in range(2):
                     try:
-                        # 첫 시도는 정석대로, 실패하면 원문만 살짝 다듬어서(그러나 분석은 길게) 재요청
                         if attempt == 1:
                             request_content[0] = prompt_retry
                         
@@ -235,12 +241,10 @@ if exam_file and textbook_files and api_key:
                         
                         if response.parts:
                             result_text = response.text
-                            # SKIP이면 그냥 넘어감
                             if "SKIP" in result_text:
                                 success = True
                                 break
                                 
-                            # 결과 출력
                             if i == 0: st.markdown(f"### 📋 분석 결과")
                             st.markdown(result_text, unsafe_allow_html=True)
                             full_accumulated_text += result_text + "\n\n"
