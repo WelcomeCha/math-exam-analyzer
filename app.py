@@ -10,15 +10,18 @@ import datetime
 import json
 import re
 
-# 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (Final Fix)", layout="wide")
+# 1. 설정 및 스타일링 (CSS 폰트 사이즈 수정 반영)
+st.set_page_config(page_title="수학 기출 분석기 (Final Rendering Fix)", layout="wide")
 st.markdown("""
     <style>
-    div[data-testid="stMarkdownContainer"] p, td, th { 
+    /* 기본 폰트 설정 (가이드라인 반영: 14px) */
+    div[data-testid="stMarkdownContainer"] p, td, th, li { 
         font-family: 'Malgun Gothic', sans-serif !important; 
-        font-size: 15px !important;
+        font-size: 14px !important;
         line-height: 1.6 !important;
     }
+    
+    /* 표 스타일 */
     table {
         width: 100% !important;
         table-layout: fixed !important;
@@ -30,6 +33,7 @@ st.markdown("""
         vertical-align: top !important;
         word-wrap: break-word !important;
     }
+    /* 열 너비 고정 */
     th:nth-child(1) { width: 8% !important; }
     th:nth-child(2) { width: 30% !important; }
     th:nth-child(3) { width: 31% !important; }
@@ -48,7 +52,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (파일명기반 통일 + LaTeX 복구)")
+st.title("💯 수학 기출 분석기 (렌더링 최적화)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -68,8 +72,7 @@ with st.sidebar:
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
     st.info("🔒 **모델:** gemini-2.5-pro")
-    st.info("📚 **교재명:** 업로드한 PDF 파일명을 기준으로 자동 통일합니다.")
-    st.info("🛠️ **LaTeX:** 절댓값 기호(|) 깨짐 방지 코드 재적용 완료.")
+    st.info("🎨 **렌더링 Fix:** 폰트 14px, 부등호(&lt;), 행렬 줄바꿈(\\\\) 자동 보정 적용")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
@@ -128,15 +131,40 @@ def wait_for_files_active(files):
             st.stop()
     status.empty()
 
+# 🔥 [핵심 기능] LaTeX/HTML 렌더링 보정 함수
+def fix_latex_rendering(text):
+    """
+    1. 부등호(<) 인코딩: HTML 태그(<br> 등)가 아닌 순수 부등호는 &lt;로 변환
+    2. 행렬 줄바꿈: pmatrix 등에서 ' \ '를 ' \\ '로 변환하여 줄바꿈 적용
+    """
+    # 1. 부등호 처리: < 뒤에 br, /br, b, /b 등이 오지 않는 경우 &lt; 로 변환
+    # (HTML 태그가 깨지는 것을 방지하면서 수식의 부등호만 타겟팅)
+    text = re.sub(r'<(?!(br|/br|b|/b|strong|/strong|span|/span))', '&lt;', text, flags=re.IGNORECASE)
+    
+    # 2. 행렬 줄바꿈 처리: 백슬래시+공백(\ )을 이중 백슬래시+공백(\\ )으로 변환
+    # LaTeX 행렬에서 줄바꿈이 \ 로 잘못 표기된 경우 수정
+    text = text.replace(r"\ ", r"\\ ")
+    
+    return text
+
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
+    
+    # 가이드라인 1번: CSS 폰트 사이즈 14px 적용
     return f"""
     <html><head><meta charset="utf-8">
     <script>MathJax={{tex:{{inlineMath:[['$','$']],displayMath:[['$$','$$']]}},svg:{{fontCache:'global'}} }};</script>
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        body {{ font-family: 'Malgun Gothic', sans-serif; padding: 40px; line-height: 1.6; max-width: 1400px; margin: 0 auto; }}
+        body {{ 
+            font-family: 'Malgun Gothic', sans-serif; 
+            font-size: 14px; /* 폰트 사이즈 조정 */
+            line-height: 1.6; 
+            padding: 40px; 
+            max-width: 1400px; 
+            margin: 0 auto; 
+        }}
         table {{ border-collapse: collapse; width: 100%; table-layout: fixed; margin-bottom: 30px; }}
         th, td {{ border: 1px solid #ddd; padding: 15px; vertical-align: top; word-wrap: break-word; }}
         th {{ background: #007bff; color: white; text-align: center; }}
@@ -149,7 +177,7 @@ def create_html(text_list):
 # 5. 메인 로직
 if exam_file and textbook_files and api_key:
     c1, c2 = st.columns(2)
-    start_btn = c1.button("🚀 분석 시작 (파일명 기반 통일)")
+    start_btn = c1.button("🚀 분석 시작")
     resume_btn = False
     
     if st.session_state['target_list'] and st.session_state['last_index'] < len(st.session_state['target_list']):
@@ -169,8 +197,7 @@ if exam_file and textbook_files and api_key:
                               [f"[서답형 {i}]" for i in range(1, 7)]
                 st.session_state['target_list'] = forced_list
 
-                # 🔥 [핵심] 부교재 파일명 추출하여 교재명 리스트 생성
-                # 예: ['[올림포스]', '[교과서]']
+                # 부교재명 파일명 기반 바인딩
                 tb_names_list = [f"[{f.name.replace('.pdf', '')}]" for f in textbook_files]
                 st.session_state['textbook_names'] = ", ".join(tb_names_list)
                 
@@ -187,7 +214,7 @@ if exam_file and textbook_files and api_key:
                 status.info("💾 캐시 생성 중...")
                 cache = caching.CachedContent.create(
                     model='models/gemini-2.5-pro',
-                    display_name='filename_bind_analysis',
+                    display_name='rendering_fix_analysis',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -198,7 +225,6 @@ if exam_file and textbook_files and api_key:
             
             q_list = st.session_state['target_list']
             start_idx = st.session_state['last_index']
-            # 교재명 목록 (프롬프트 주입용)
             tb_names_str = st.session_state['textbook_names']
             
             p_bar = st.progress(start_idx / len(q_list))
@@ -210,20 +236,19 @@ if exam_file and textbook_files and api_key:
                 
                 status.info(f"🔄 분석 중... {display_label}")
                 
-                # 🔥 [프롬프트] 파일명 기반 교재명 강제 + 절댓값 명령 강화
+                # 프롬프트
                 prompt = f"""
                 기출문제 PDF에서 **'{display_label}'** 문항을 찾아 분석해라. (없으면 "SKIP")
                 
-                **[부교재 매칭 가이드 - 파일명 기준 통일]**
-                지금 등록된 부교재 목록은 다음과 같다: **{tb_names_str}**
-                유사 문항 출처를 적을 때는 위 목록에 있는 이름을 정확히 사용해서 **`[교재명] p.00 00번`** 양식으로 적어라.
-                (예: `[{textbook_files[0].name.replace('.pdf', '')}] p.10 5번`)
+                **[부교재 매칭 가이드]**
+                지금 등록된 부교재 목록: **{tb_names_str}**
+                유사 문항 출처는 위 목록 이름을 사용하여 **`[교재명] p.00 00번`** 양식으로 통일해라.
                 
-                **[작성 금지 및 주의사항]**
-                1. **절댓값 기호(`|`) 금지:** 마크다운 표가 깨진다. 무조건 **`\\lvert x \\rvert`** 명령어를 써라.
+                **[작성 주의사항]**
+                1. **절댓값:** `|` 대신 **`\\lvert x \\rvert`** 사용 (표 깨짐 방지).
                 2. **수식:** `$ ... $` (LaTeX) 필수.
                 3. **말투:** 반말(해라체).
-                4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 요약 (풀이 X).
+                4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 요약.
                 
                 | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
@@ -239,6 +264,9 @@ if exam_file and textbook_files and api_key:
                             if "SKIP" in txt:
                                 success = True
                                 break
+                            
+                            # 🔥 [핵심] 렌더링 보정 함수 적용
+                            txt = fix_latex_rendering(txt)
                             
                             usage = resp.usage_metadata
                             total = usage.prompt_token_count
