@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (3.1 Pro 버전)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro 안정화 버전)", layout="wide")
 st.markdown("""
     <style>
     /* 기본 폰트 설정 (가이드라인 반영: 14px) */
@@ -52,7 +52,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (3.1 Pro 엔진)")
+st.title("💯 수학 기출 분석기 (2.5 Pro 엔진)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -71,7 +71,7 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델:** gemini-3.1-pro (심층 추론 강화)")
+    st.info("🔒 **모델:** gemini-2.5-pro (안정성 검증 완료)")
     st.info("🎨 **렌더링 Fix:** 폰트 14px, 부등호(&lt;), 행렬 줄바꿈(\\\\) 자동 보정 적용")
     
     if api_key:
@@ -203,10 +203,10 @@ if exam_file and textbook_files and api_key:
                 
                 status.info("💾 캐시 생성 중...")
                 
-                # 🔥 모델 3.1 Pro 로 변경 적용
+                # 🔥 모델 2.5 Pro 롤백 적용
                 cache = caching.CachedContent.create(
-                    model='models/gemini-3.1-pro',
-                    display_name='rendering_fix_analysis_31pro',
+                    model='models/gemini-2.5-pro',
+                    display_name='rendering_fix_analysis_25pro',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
