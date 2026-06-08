@@ -10,8 +10,8 @@ import datetime
 import json
 import re
 
-# 1. 설정 및 스타일링 (CSS 폰트 사이즈 수정 반영)
-st.set_page_config(page_title="수학 기출 분석기 (Final Rendering Fix)", layout="wide")
+# 1. 설정 및 스타일링
+st.set_page_config(page_title="수학 기출 분석기 (3.1 Pro 버전)", layout="wide")
 st.markdown("""
     <style>
     /* 기본 폰트 설정 (가이드라인 반영: 14px) */
@@ -52,7 +52,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (렌더링 최적화)")
+st.title("💯 수학 기출 분석기 (3.1 Pro 엔진)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -71,7 +71,7 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델:** gemini-2.5-pro")
+    st.info("🔒 **모델:** gemini-3.1-pro (심층 추론 강화)")
     st.info("🎨 **렌더링 Fix:** 폰트 14px, 부등호(&lt;), 행렬 줄바꿈(\\\\) 자동 보정 적용")
     
     if api_key:
@@ -131,27 +131,18 @@ def wait_for_files_active(files):
             st.stop()
     status.empty()
 
-# 🔥 [핵심 기능] LaTeX/HTML 렌더링 보정 함수
+# 🔥 LaTeX/HTML 렌더링 보정 함수
 def fix_latex_rendering(text):
-    """
-    1. 부등호(<) 인코딩: HTML 태그(<br> 등)가 아닌 순수 부등호는 &lt;로 변환
-    2. 행렬 줄바꿈: pmatrix 등에서 ' \ '를 ' \\ '로 변환하여 줄바꿈 적용
-    """
-    # 1. 부등호 처리: < 뒤에 br, /br, b, /b 등이 오지 않는 경우 &lt; 로 변환
-    # (HTML 태그가 깨지는 것을 방지하면서 수식의 부등호만 타겟팅)
+    # 1. 부등호(<) 인코딩 처리
     text = re.sub(r'<(?!(br|/br|b|/b|strong|/strong|span|/span))', '&lt;', text, flags=re.IGNORECASE)
-    
-    # 2. 행렬 줄바꿈 처리: 백슬래시+공백(\ )을 이중 백슬래시+공백(\\ )으로 변환
-    # LaTeX 행렬에서 줄바꿈이 \ 로 잘못 표기된 경우 수정
+    # 2. 행렬(\ ) 줄바꿈 처리
     text = text.replace(r"\ ", r"\\ ")
-    
     return text
 
 def create_html(text_list):
     full_text = "\n\n".join(text_list)
     html_body = markdown.markdown(full_text, extensions=['tables'])
     
-    # 가이드라인 1번: CSS 폰트 사이즈 14px 적용
     return f"""
     <html><head><meta charset="utf-8">
     <script>MathJax={{tex:{{inlineMath:[['$','$']],displayMath:[['$$','$$']]}},svg:{{fontCache:'global'}} }};</script>
@@ -159,7 +150,7 @@ def create_html(text_list):
     <style>
         body {{ 
             font-family: 'Malgun Gothic', sans-serif; 
-            font-size: 14px; /* 폰트 사이즈 조정 */
+            font-size: 14px; 
             line-height: 1.6; 
             padding: 40px; 
             max-width: 1400px; 
@@ -187,7 +178,6 @@ if exam_file and textbook_files and api_key:
         try:
             status = st.empty()
             
-            # 1. 캐시 생성 및 리스트 초기화
             if not st.session_state.get('cache_name') or start_btn:
                 st.session_state['analysis_history'] = []
                 st.session_state['last_index'] = 0
@@ -212,9 +202,11 @@ if exam_file and textbook_files and api_key:
                 wait_for_files_active(all_files)
                 
                 status.info("💾 캐시 생성 중...")
+                
+                # 🔥 모델 3.1 Pro 로 변경 적용
                 cache = caching.CachedContent.create(
-                    model='models/gemini-2.5-pro',
-                    display_name='rendering_fix_analysis',
+                    model='models/gemini-3.1-pro',
+                    display_name='rendering_fix_analysis_31pro',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -229,14 +221,12 @@ if exam_file and textbook_files and api_key:
             
             p_bar = st.progress(start_idx / len(q_list))
             
-            # 2. 분석 루프
             for i in range(start_idx, len(q_list)):
                 q_label = q_list[i]
                 display_label = q_label + "번" if q_label.isdigit() else q_label
                 
                 status.info(f"🔄 분석 중... {display_label}")
                 
-                # 프롬프트
                 prompt = f"""
                 기출문제 PDF에서 **'{display_label}'** 문항을 찾아 분석해라. (없으면 "SKIP")
                 
@@ -265,7 +255,7 @@ if exam_file and textbook_files and api_key:
                                 success = True
                                 break
                             
-                            # 🔥 [핵심] 렌더링 보정 함수 적용
+                            # 렌더링 보정 함수 적용
                             txt = fix_latex_rendering(txt)
                             
                             usage = resp.usage_metadata
