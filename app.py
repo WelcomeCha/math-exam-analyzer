@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (2.5 Pro + Batch 최적화)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (3.5 flash + Batch 최적화)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th, li { 
@@ -48,7 +48,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (2.5 Pro + 비용 절감)")
+st.title("💯 수학 기출 분석기 (3.5 flash + 비용 절감)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -163,7 +163,7 @@ with col2:
 # 5. 메인 로직
 if exam_file and textbook_files and api_key:
     c1, c2 = st.columns(2)
-    start_btn = c1.button("🚀 분석 시작 (2.5 Pro + 묶음 처리)")
+    start_btn = c1.button("🚀 분석 시작 (3.5 flash + 묶음 처리)")
     resume_btn = False
     
     if st.session_state['target_list'] and st.session_state['last_index'] < len(st.session_state['target_list']):
@@ -198,7 +198,7 @@ if exam_file and textbook_files and api_key:
                 
                 status.info("💾 캐시 생성 중...")
                 
-                # 🔥 [수정 완료] 모델 2.5 Pro 확정 적용
+                # 🔥 [수정 완료] 모델 3.5 flash 확정 적용
                 cache = caching.CachedContent.create(
                     model='models/gemini-3.5-flash',
                     display_name='batch_optimized_analysis_25pro',
