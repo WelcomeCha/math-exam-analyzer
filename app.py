@@ -67,7 +67,7 @@ with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델:** gemini-2.5-pro (안정성 검증 완료)")
+    st.info("🔒 **모델:** gemini-2.5-flash (안정성 검증 완료)")
     st.info("💰 **비용 절감:** 3문항 단위 묶음 처리(Batch)로 호출 비용 대폭 감소")
     st.info("🎨 **렌더링 Fix:** 폰트 14px, 부등호(&lt;), 행렬 줄바꿈(\\\\) 자동 보정 적용")
     
@@ -200,7 +200,7 @@ if exam_file and textbook_files and api_key:
                 
                 # 🔥 [수정 완료] 모델 2.5 Pro 확정 적용
                 cache = caching.CachedContent.create(
-                    model='models/gemini-2.5-pro',
+                    model='models/gemini-2.5-flash',
                     display_name='batch_optimized_analysis_25pro',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
