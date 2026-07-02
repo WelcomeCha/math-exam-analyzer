@@ -11,7 +11,7 @@ import json
 import re
 
 # 1. 설정 및 스타일링
-st.set_page_config(page_title="수학 기출 분석기 (3.5 flash + Batch 최적화)", layout="wide")
+st.set_page_config(page_title="수학 기출 분석기 (3.5 Flash 로컬 구동용)", layout="wide")
 st.markdown("""
     <style>
     div[data-testid="stMarkdownContainer"] p, td, th, li { 
@@ -48,7 +48,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("💯 수학 기출 분석기 (3.5 flash + 비용 절감)")
+st.title("💯 수학 기출 분석기 (3.5 Flash + 비용 절감)")
 
 # 2. 세션 초기화
 if 'analysis_history' not in st.session_state:
@@ -62,18 +62,26 @@ if 'cache_name' not in st.session_state:
 if 'textbook_names' not in st.session_state:
     st.session_state['textbook_names'] = ""
 
-# 3. API 키
+# 3. API 키 설정
 with st.sidebar:
     st.header("설정")
     api_key = st.text_input("Google API Key", type="password")
     st.divider()
-    st.info("🔒 **모델:** gemini-3.5-flash (안정성 검증 완료)")
+    st.info("🔒 **모델:** gemini-3.5-flash")
     st.info("💰 **비용 절감:** 3문항 단위 묶음 처리(Batch)로 호출 비용 대폭 감소")
     st.info("🎨 **렌더링 Fix:** 폰트 14px, 부등호(&lt;), 행렬 줄바꿈(\\\\) 자동 보정 적용")
+    st.info("📚 **문항 매칭:** 부교재 유사 문항 2개씩 추출")
     
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key
         genai.configure(api_key=api_key)
+
+# 4. 파일 업로드 UI
+col1, col2 = st.columns(2)
+with col1:
+    exam_file = st.file_uploader("기출 PDF", type=['pdf'])
+with col2:
+    textbook_files = st.file_uploader("부교재 PDF (다중)", type=['pdf'], accept_multiple_files=True)
 
 # --- 함수 정의 ---
 
@@ -153,17 +161,10 @@ def create_html(text_list):
     </style></head><body>{html_body}</body></html>
     """
 
-# 4. 파일 업로드
-col1, col2 = st.columns(2)
-with col1:
-    exam_file = st.file_uploader("기출 PDF", type=['pdf'])
-with col2:
-    textbook_files = st.file_uploader("부교재 PDF (다중)", type=['pdf'], accept_multiple_files=True)
-
 # 5. 메인 로직
 if exam_file and textbook_files and api_key:
     c1, c2 = st.columns(2)
-    start_btn = c1.button("🚀 분석 시작 (3.5 flash + 묶음 처리)")
+    start_btn = c1.button("🚀 분석 시작 (3.5 Flash + 묶음 처리)")
     resume_btn = False
     
     if st.session_state['target_list'] and st.session_state['last_index'] < len(st.session_state['target_list']):
@@ -198,10 +199,10 @@ if exam_file and textbook_files and api_key:
                 
                 status.info("💾 캐시 생성 중...")
                 
-                # 🔥 [수정 완료] 모델 3.5 flash 확정 적용
+                # 🔥 모델 3.5 Flash 적용
                 cache = caching.CachedContent.create(
                     model='models/gemini-3.5-flash',
-                    display_name='batch_optimized_analysis_25pro',
+                    display_name='batch_optimized_analysis_35flash',
                     system_instruction="너는 수학 분석가다. 반말(해라체), LaTeX($) 필수, 표 양식 준수.",
                     contents=all_files,
                     ttl=datetime.timedelta(minutes=60)
@@ -239,12 +240,13 @@ if exam_file and textbook_files and api_key:
                 2. **수식:** `$ ... $` (LaTeX) 필수.
                 3. **말투:** 반말(해라체).
                 4. **상세 분석:** '▶ 변형 포인트', '▶ 출제 의도'만 요약.
+                5. **유사 문항 개수:** 부교재 유사 문항은 반드시 **2문제**를 찾아서 적어라.
                 
                 아래 양식에 맞추어 {len(chunk)}개 문항에 대한 분석을 **하나의 연속된 표**로 작성해라.
                 
-                | 문항 | 기출 요약 | 부교재 유사 문항 | 상세 변형 분석 |
+                | 문항 | 기출 요약 | 부교재 유사 문항 (2문제) | 상세 변형 분석 |
                 | :--- | :--- | :--- | :--- |
-                | (문항 A) | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[원본]**<br>[교재명] p.xx xx번<br>(LaTeX)<br><br>**[요약]** | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
+                | (문항 A) | **[원본]**<br>(LaTeX)<br><br>**[요약]** | **[유사 1]**<br>[교재명] p.xx xx번<br>(LaTeX)<br><br>**[유사 2]**<br>[교재명] p.xx xx번<br>(LaTeX) | **▶ 변형 포인트**<br>• 내용<br><br>**▶ 출제 의도**<br>• 내용 |
                 | (문항 B) | (A문항과 동일 형식 반복) | ... | ... |
                 """
                 
